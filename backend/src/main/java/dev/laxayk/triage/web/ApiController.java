@@ -6,6 +6,7 @@ import dev.laxayk.triage.gate.SafetyGate;
 import dev.laxayk.triage.ingest.SampleLoader;
 import dev.laxayk.triage.llm.LlmClient;
 import dev.laxayk.triage.notify.Outbox;
+import dev.laxayk.triage.pipeline.Evaluator;
 import dev.laxayk.triage.pipeline.Pipeline;
 import dev.laxayk.triage.store.Store;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,8 +33,10 @@ public class ApiController {
     private final EventHub hub;
     private final Outbox outbox;
     private final LlmClient llm;
+    private final Evaluator evaluator;
 
-    public ApiController(Store store, Auth auth, Pipeline pipeline, SampleLoader samples, EventHub hub, Outbox outbox, LlmClient llm) {
+    public ApiController(Store store, Auth auth, Pipeline pipeline, SampleLoader samples, EventHub hub, Outbox outbox, LlmClient llm, Evaluator evaluator) {
+        this.evaluator = evaluator;
         this.store = store;
         this.auth = auth;
         this.pipeline = pipeline;
@@ -219,6 +222,9 @@ public class ApiController {
         out.put("sendMode", outbox.mode());
         return out;
     }
+
+    @GetMapping("/eval")
+    public Map<String, Object> eval() throws Exception { return evaluator.run(); }
 
     @GetMapping("/stream")
     public SseEmitter stream() { return hub.subscribe(); }
