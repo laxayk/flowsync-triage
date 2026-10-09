@@ -6,7 +6,7 @@ classifies what is left, turns it into tickets, notifies the owner, and drafts r
 The fictional company is **FlowSync**, a B2B SaaS that syncs records between tools customers already use
 (Salesforce/HubSpot to databases and sheets). The sample mailbox is written for that product.
 
-> Status: work in progress on `develop`. Built so far: backend pipeline, REST API, live dashboard, Docker, tests.
+> Status: work in progress on `develop`. Built so far: backend pipeline, tool-using drafting agent with a vector knowledge base, owner briefings, REST API, live dashboard, Docker, tests.
 > Nothing here has been run against a real mailbox yet; the demo uses the bundled sample emails.
 
 ## How it works
@@ -22,7 +22,9 @@ virtual-thread worker (per-thread lock)
    3. Classify (LLM, JSON, validated) QUERY BUG WRONG_BEHAVIOUR ENHANCEMENT BILLING ACCOUNT_ACCESS OUTAGE | PRAISE SPAM SALES IRRELEVANT
         falls back to keyword rules when the LLM is off, slow or invalid (ticket is flagged "needs review")
    4. Ticket + owner + priority + notifications (Slack webhook, email captured)
-   5. Reply draft for query-type mail, grounded in a small knowledge base; sent only after an APPROVER clicks approve
+   5. Drafting agent (query, billing, access mail): the LLM picks read-only tools in a bounded loop (search_knowledge, lookup_customer,
+      ticket_history, open_incidents), then writes the reply. Scripted run of the same tools when no LLM. Sent only after an APPROVER clicks approve
+   6. Owner briefing: an email to the owning department's owner with the ticket, customer plan/SLA and the department's escalation process
         |
         v
 Angular dashboard (live updates over SSE), audit log, pipeline trace per mail
@@ -35,6 +37,19 @@ Key choices:
 - **The gate runs before the model.** Hostile or junk mail never reaches the LLM, which saves cost and removes the injection surface for obvious attacks. Email text is also treated as untrusted data in prompts, validated on the way out, and escaped in every sink.
 - **Replies are never auto-sent.** Default send mode is `capture` (stored in the outbox table). `live` sends via SMTP from the dedicated test mailbox.
 - **Roles.** `agent` works tickets; `approver` can send replies and release held mail. Every approval is audited with actor, draft hash and recipient.
+
+## The agent layer
+
+- **Knowledge base (vector store).** Product docs, client profiles and internal escalation processes live in `backend/src/main/resources/kb/`.
+  Each file is embedded once and stored in the `kb_chunks` table with the embedder id and a content hash (restarts re-embed only what changed).
+  Search is cosine similarity in memory, which fits a few hundred chunks; the same table moves to pgvector when it grows.
+  The default embedder is a local feature-hashing one (no model, no network, no RAM). It matches words, not meaning; set `EMBED_PROVIDER=ollama`
+  and `EMBED_MODEL=nomic-embed-text` (or `openai`) for model embeddings.
+- **Drafting agent.** One JSON action per turn: call a tool or finish. At most 4 tool calls, invalid output twice or no finish falls back to the scripted run.
+  Every tool is read-only, the customer is always the stored sender (model arguments cannot redirect the lookup), and the email is treated as untrusted data.
+  The dashboard shows the full tool trace under each draft.
+- **Owner briefing.** After a ticket is created, the department owner (`DEPARTMENTS` in `.env`, never taken from the email) gets a short brief. One per ticket.
+  Goes through the same switch as replies: `SEND_MODE=capture` stores it (shown on the ticket), `live` sends it over SMTP.
 
 ## Run it (Windows, Docker Desktop)
 
@@ -77,6 +92,6 @@ CI runs both on every push (`.github/workflows/ci.yml`).
 ## Known limits (honest list)
 
 - The keyword fallback is deliberately simple; its accuracy has not been measured. LLM accuracy and latency are also unmeasured until the eval run is done.
-- Reply drafts use a keyword search over six short knowledge-base files, not a vector store.
+- The knowledge base is small and hand-written (6 docs, 7 client profiles, 5 process notes); retrieval quality with the hashing embedder is word-overlap, not semantic. Client data is fictional.
 - Sessions are in memory and auth is demo-grade (seeded users). Production would use SSO.
 - Not yet built: WhatsApp notifications, Gmail push (IMAP polling only), a labelled eval harness, load numbers.

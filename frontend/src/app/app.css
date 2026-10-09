@@ -63,3 +63,7 @@ pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; margi
   header { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; } .right { flex-wrap: wrap; }
   .subj { max-width: 160px; } th:nth-child(5), td:nth-child(5), th:nth-child(7), td:nth-child(7) { display: none; }
 }
+
+.trace { margin: 6px 0; font-size: 12px; } .trace summary { cursor: pointer; color: #4338ca; font-weight: 600; }
+.step { padding: 4px 0; border-top: 1px solid #e8eaf8; } .step code { font-size: 11px; background: #eef0ff; border-radius: 4px; padding: 0 4px; word-break: break-all; }
+.step .muted { white-space: pre-wrap; max-height: 90px; overflow: auto; }

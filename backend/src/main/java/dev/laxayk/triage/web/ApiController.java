@@ -34,9 +34,11 @@ public class ApiController {
     private final Outbox outbox;
     private final LlmClient llm;
     private final Evaluator evaluator;
+    private final dev.laxayk.triage.agent.KnowledgeBase kb;
 
-    public ApiController(Store store, Auth auth, Pipeline pipeline, SampleLoader samples, EventHub hub, Outbox outbox, LlmClient llm, Evaluator evaluator) {
+    public ApiController(Store store, Auth auth, Pipeline pipeline, SampleLoader samples, EventHub hub, Outbox outbox, LlmClient llm, Evaluator evaluator, dev.laxayk.triage.agent.KnowledgeBase kb) {
         this.evaluator = evaluator;
+        this.kb = kb;
         this.store = store;
         this.auth = auth;
         this.pipeline = pipeline;
@@ -92,7 +94,12 @@ public class ApiController {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ticket", t);
         out.put("emails", emails);
-        out.put("drafts", store.draftsForTicket(id));
+        var drafts = store.draftsForTicket(id);
+        out.put("drafts", drafts);
+        Map<Long, Object> steps = new LinkedHashMap<>();
+        for (DraftRow dr : drafts) steps.put(dr.id(), store.draftSteps(dr.id()));
+        out.put("draftSteps", steps);
+        out.put("ownerMails", store.ownerMails(id));
         out.put("notifications", store.notificationsForTicket(id));
         out.put("events", events);
         out.put("audit", store.auditForTicket(id));
@@ -220,6 +227,7 @@ public class ApiController {
         out.put("latencyPercentilesMs", p);
         out.put("llm", Map.of("enabled", llm.enabled(), "provider", llm.provider(), "model", llm.model(), "circuitOpen", llm.circuitOpen()));
         out.put("sendMode", outbox.mode());
+        out.put("knowledgeBase", Map.of("chunks", kb.size(), "embedder", String.valueOf(kb.embedderId())));
         return out;
     }
 

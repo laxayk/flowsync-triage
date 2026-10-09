@@ -218,8 +218,68 @@ public class Store {
     }
 
     public void insertOutbox(long draftId, String recipient, String subject, String body, String mode) {
-        db.sql("INSERT INTO outbox(draft_id,recipient,subject,body,mode,sent_at) VALUES (?,?,?,?,?,?)")
+        db.sql("INSERT INTO outbox(draft_id,recipient,subject,body,mode,sent_at,kind) VALUES (?,?,?,?,?,?,'REPLY')")
                 .params(draftId, recipient, subject, body, mode, ts(Instant.now())).update();
+    }
+
+    public void insertOwnerAlert(long ticketId, String recipient, String subject, String body, String mode) {
+        db.sql("INSERT INTO outbox(draft_id,ticket_id,recipient,subject,body,mode,sent_at,kind) VALUES (NULL,?,?,?,?,?,?,'OWNER_ALERT')")
+                .params(ticketId, recipient, subject, body, mode, ts(Instant.now())).update();
+    }
+
+    public boolean ownerAlertExists(long ticketId) {
+        return db.sql("SELECT count(*) FROM outbox WHERE ticket_id=? AND kind='OWNER_ALERT'").param(ticketId)
+                .query(Long.class).single() > 0;
+    }
+
+    public record OwnerMail(long id, String recipient, String subject, String body, String mode, Instant sentAt) {}
+
+    public List<OwnerMail> ownerMails(long ticketId) {
+        return db.sql("SELECT * FROM outbox WHERE ticket_id=? AND kind='OWNER_ALERT' ORDER BY id").param(ticketId)
+                .query((rs, n) -> new OwnerMail(rs.getLong("id"), rs.getString("recipient"), rs.getString("subject"),
+                        rs.getString("body"), rs.getString("mode"), ts(rs, "sent_at"))).list();
+    }
+
+    public record TicketBrief(String key, String subject, String category, String status) {}
+
+    public List<TicketBrief> ticketHistory(String requester, long excludeTicketId) {
+        return db.sql("SELECT * FROM tickets WHERE requester=? AND id<>? ORDER BY id DESC LIMIT 5").params(requester, excludeTicketId)
+                .query((rs, n) -> new TicketBrief("FS-" + (1000 + rs.getLong("id")), rs.getString("subject"),
+                        rs.getString("category"), rs.getString("status"))).list();
+    }
+
+    public List<TicketBrief> openIncidents() {
+        return db.sql("SELECT * FROM tickets WHERE category='OUTAGE' AND status IN ('OPEN','IN_PROGRESS') ORDER BY id DESC LIMIT 10")
+                .query((rs, n) -> new TicketBrief("FS-" + (1000 + rs.getLong("id")), rs.getString("subject"),
+                        rs.getString("category"), rs.getString("status"))).list();
+    }
+
+    // ---------- draft steps and knowledge chunks ----------
+    public record StepRow(long id, int stepNo, String kind, String tool, String args, String result, long latencyMs) {}
+
+    public void insertDraftStep(long draftId, int stepNo, String kind, String tool, String args, String result, long latencyMs) {
+        db.sql("INSERT INTO draft_steps(draft_id,step_no,kind,tool,args,result,latency_ms) VALUES (?,?,?,?,?,?,?)")
+                .params(draftId, stepNo, kind, tool, args, result, latencyMs).update();
+    }
+
+    public List<StepRow> draftSteps(long draftId) {
+        return db.sql("SELECT * FROM draft_steps WHERE draft_id=? ORDER BY step_no").param(draftId)
+                .query((rs, n) -> new StepRow(rs.getLong("id"), rs.getInt("step_no"), rs.getString("kind"), rs.getString("tool"),
+                        rs.getString("args"), rs.getString("result"), rs.getLong("latency_ms"))).list();
+    }
+
+    public record KbRow(String sha, String embedder, String vector) {}
+
+    public Optional<KbRow> kbChunk(String source) {
+        return db.sql("SELECT content_sha, embedder, vector FROM kb_chunks WHERE source=?").param(source)
+                .query((rs, n) -> new KbRow(rs.getString(1), rs.getString(2), rs.getString(3))).optional();
+    }
+
+    public void upsertKbChunk(String source, String type, String title, String sha, String embedder, String vector) {
+        int n = db.sql("UPDATE kb_chunks SET doc_type=?, title=?, content_sha=?, embedder=?, vector=? WHERE source=?")
+                .params(type, title, sha, embedder, vector, source).update();
+        if (n == 0) db.sql("INSERT INTO kb_chunks(source,doc_type,title,content_sha,embedder,vector) VALUES (?,?,?,?,?,?)")
+                .params(source, type, title, sha, embedder, vector).update();
     }
 
     public long countOutbox() {

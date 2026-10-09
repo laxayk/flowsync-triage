@@ -27,6 +27,22 @@ public class Outbox {
 
     public String mode() { return mode; }
 
+    /** Internal brief to a department owner (not a customer reply). Same capture/live switch as replies. */
+    public String sendInternal(long ticketId, String to, String subject, String body) {
+        if (mode.equals("live")) {
+            JavaMailSender sender = mail.getIfAvailable();
+            if (sender == null || from.isBlank()) throw new IllegalStateException("live send requires SMTP settings and SEND_FROM");
+            SimpleMailMessage m = new SimpleMailMessage();
+            m.setFrom(from);
+            m.setTo(to);
+            m.setSubject(subject);
+            m.setText(body);
+            sender.send(m);
+        }
+        store.insertOwnerAlert(ticketId, to, subject, body, mode);
+        return mode;
+    }
+
     /** Returns the effective mode used ("capture" or "live"). Throws if live sending is misconfigured. */
     public String send(long draftId, String to, String subject, String body) {
         if (mode.equals("live")) {

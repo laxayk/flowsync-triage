@@ -48,3 +48,9 @@ app:
   send:
     mode: ${SEND_MODE:capture}
     from: ${SEND_FROM:}
+  embed:
+    provider: ${EMBED_PROVIDER:hash}
+    base-url: ${EMBED_BASE_URL:}
+    api-key: ${EMBED_API_KEY:}
+    model: ${EMBED_MODEL:}
+  departments: ${DEPARTMENTS:ENGINEERING=priya@flowsync.example,PRODUCT=neha@flowsync.example,SUPPORT=sam@flowsync.example,FINANCE=maya@flowsync.example,SRE=ravi@flowsync.example}

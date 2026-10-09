@@ -76,6 +76,23 @@ class PipelineIntegrationTest {
         assertTrue(drafts.get(0).evidence().toLowerCase().contains("replay"));
         assertEquals("DRAFT", drafts.get(0).status());
 
+        // Drafting agent leaves a tool trace (no LLM here, so the scripted path ran the same tools)
+        var steps = store.draftSteps(drafts.get(0).id());
+        assertTrue(steps.stream().anyMatch(st -> "lookup_customer".equals(st.tool())));
+        assertTrue(steps.stream().anyMatch(st -> "search_knowledge".equals(st.tool())));
+        assertEquals("scripted", drafts.get(0).generatedBy());
+        assertTrue(drafts.get(0).body().contains("Dana"));
+
+        // Each ticket briefs its department owner exactly once, even after a threaded reply
+        
+        var mails = store.ownerMails(outage.id());
+        assertEquals(1, mails.size());
+        assertEquals("ravi@flowsync.example", mails.get(0).recipient());
+        assertTrue(mails.get(0).body().contains("Veridiant"), "brief carries the customer profile");
+        assertEquals("capture", mails.get(0).mode());
+        assertEquals("priya@flowsync.example", store.ownerMails(ticket(m, "02-bug-duplicates").id()).get(0).recipient());
+        assertEquals(1, store.ownerMails(follow.ticketId()).size());
+
         // Idempotent re-run: nothing new
         assertEquals(0, samples.load());
         long tickets = store.listTickets(null, null, null).size();

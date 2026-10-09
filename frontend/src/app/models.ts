@@ -13,8 +13,10 @@ export interface Draft { id: number; ticketId: number; body: string; evidence: s
 export interface Notification { id: number; channel: string; target: string; text: string; delivered: boolean; createdAt: string; }
 export interface PipelineEvent { id: number; correlationId: string; stage: string; detail: string; latencyMs: number; }
 export interface Audit { id: number; actor: string; action: string; detail: string; at: string; }
+export interface DraftStep { id: number; stepNo: number; kind: string; tool: string | null; args: string | null; result: string | null; latencyMs: number; }
+export interface OwnerMail { id: number; recipient: string; subject: string; body: string; mode: string; sentAt: string; }
 export interface TicketDetail {
-  ticket: Ticket; emails: EmailRow[]; drafts: Draft[]; notifications: Notification[]; events: PipelineEvent[]; audit: Audit[];
+  ticket: Ticket; emails: EmailRow[]; drafts: Draft[]; draftSteps: Record<number, DraftStep[]>; ownerMails: OwnerMail[]; notifications: Notification[]; events: PipelineEvent[]; audit: Audit[];
 }
 export interface Session { token: string; username: string; role: string; }
 export interface Stats {
@@ -24,6 +26,7 @@ export interface Stats {
   latencyPercentilesMs: Record<string, { p50: number; p95: number; n: number }>;
   llm: { enabled: boolean; provider: string; model: string; circuitOpen: boolean };
   sendMode: string;
+  knowledgeBase: { chunks: number; embedder: string };
 }
 export const CATEGORIES = ['QUERY', 'BUG', 'WRONG_BEHAVIOUR', 'ENHANCEMENT', 'BILLING', 'ACCOUNT_ACCESS', 'OUTAGE'];
 export const PRIORITIES = ['P1', 'P2', 'P3', 'P4'];

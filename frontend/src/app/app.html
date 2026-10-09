@@ -108,6 +108,18 @@
               <div class="dtitle">Reply draft <span class="muted small">by {{ dr.generatedBy }}</span>
                 <span class="state s-{{ dr.status }}">{{ dr.status }}</span></div>
               @if (dr.evidence) { <div class="muted small">Based on: {{ dr.evidence }}</div> }
+              @if (d.draftSteps[dr.id]?.length) {
+                <details class="trace">
+                  <summary>Agent trace ({{ d.draftSteps[dr.id].length }} steps)</summary>
+                  @for (st of d.draftSteps[dr.id]; track st.id) {
+                    <div class="step">
+                      <span class="chan">{{ st.kind === 'tool' ? st.tool : 'final' }}</span>
+                      @if (st.args && st.args !== '{}') { <code>{{ st.args }}</code> }
+                      <div class="muted small">{{ st.result }} <i>{{ st.latencyMs }} ms</i></div>
+                    </div>
+                  }
+                </details>
+              }
               <textarea rows="8" [disabled]="dr.status !== 'DRAFT'" [ngModel]="draftBody(dr.id, dr.body)" (ngModelChange)="editDraft(dr.id, $event)"></textarea>
               @if (dr.status === 'DRAFT') {
                 <div class="actions">
@@ -127,6 +139,17 @@
               <pre>{{ m.body }}</pre>
               @if (m.attachments) { <div class="muted small">Attachments: {{ m.attachments }}</div> }
             </div>
+          }
+
+          @if (d.ownerMails.length) {
+            <h3>Owner briefing</h3>
+            @for (m of d.ownerMails; track m.id) {
+              <div class="mail">
+                <div class="mhead"><b>To {{ m.recipient }}</b> <span class="muted">{{ m.mode === 'live' ? 'sent' : 'captured, not sent' }} · {{ m.sentAt | date: 'MMM d, HH:mm' }}</span></div>
+                <div class="muted small">{{ m.subject }}</div>
+                <pre>{{ m.body }}</pre>
+              </div>
+            }
           }
 
           <h3>Notifications</h3>
@@ -173,7 +196,8 @@
             <div class="card"><h4>LLM</h4>
               <div>{{ s.llm.enabled ? s.llm.provider + ' / ' + s.llm.model : 'off (keyword fallback)' }}</div>
               @if (s.llm.circuitOpen) { <div class="err">circuit open, using fallback</div> }
-              <div class="muted small">Replies: {{ s.sendMode }} mode</div></div>
+              <div class="muted small">Replies and owner briefings: {{ s.sendMode }} mode</div>
+              <div class="muted small">Knowledge base: {{ s.knowledgeBase.chunks }} chunks, {{ s.knowledgeBase.embedder }}</div></div>
             <div class="card"><h4>Mail by outcome</h4>
               @for (kv of entries(s.emailsByDisposition); track kv[0]) { <div class="row"><span>{{ kv[0] }}</span><b>{{ kv[1] }}</b></div> }</div>
             <div class="card"><h4>Gate verdicts</h4>
