@@ -1,0 +1,215 @@
+@if (!api.session()) {
+  <div class="login-wrap">
+    <form class="login" (ngSubmit)="doLogin()">
+      <div class="logo">FlowSync <b>Triage</b></div>
+      <p class="muted">Sign in to the support dashboard</p>
+      <label>Username
+        <select name="u" [(ngModel)]="username">
+          <option value="agent">agent (works tickets)</option>
+          <option value="approver">approver (can send replies)</option>
+        </select>
+      </label>
+      <label>Password <input name="p" type="password" [(ngModel)]="password" autocomplete="current-password" /></label>
+      @if (loginError()) { <div class="err">{{ loginError() }}</div> }
+      <button type="submit" class="primary">Sign in</button>
+      <p class="hint">Demo logins are set in <code>.env</code> (see <code>.env.example</code>).</p>
+    </form>
+  </div>
+} @else {
+  <header>
+    <div class="logo">FlowSync <b>Triage</b></div>
+    <nav>
+      <button [class.on]="tab() === 'tickets'" (click)="tab.set('tickets')">Tickets <span class="count">{{ tickets().length }}</span></button>
+      <button [class.on]="tab() === 'review'" (click)="tab.set('review')">Review queue
+        @if (reviewCount()) { <span class="count warn">{{ reviewCount() }}</span> }
+      </button>
+      <button [class.on]="tab() === 'stats'" (click)="tab.set('stats')">Stats</button>
+    </nav>
+    <div class="right">
+      <span class="live" [class.off]="!live()"><i></i>{{ live() ? 'Live' : 'Offline' }}</span>
+      <span class="who">{{ api.session()!.username }} <em [class.appr]="isApprover()">{{ api.session()!.role }}</em></span>
+      <button class="ghost" (click)="loadSamples()">Load sample mailbox</button>
+      <button class="ghost" (click)="logout()">Sign out</button>
+    </div>
+  </header>
+
+  @if (toast()) { <div class="toast">{{ toast() }}</div> }
+
+  <main>
+    @if (tab() === 'tickets') {
+      <section class="list">
+        <div class="filters">
+          <input placeholder="Search subject, sender, summary" [ngModel]="search()" (ngModelChange)="search.set($event); refreshAll()" />
+          <select [ngModel]="filterStatus()" (ngModelChange)="setFilter('status', $event)">
+            <option value="">All statuses</option>
+            @for (s of statuses; track s) { <option [value]="s">{{ s }}</option> }
+          </select>
+          <select [ngModel]="filterCategory()" (ngModelChange)="setFilter('category', $event)">
+            <option value="">All categories</option>
+            @for (c of categories; track c) { <option [value]="c">{{ c }}</option> }
+          </select>
+        </div>
+        <table>
+          <thead><tr><th>Ticket</th><th>Pri</th><th>Category</th><th>Subject</th><th>From</th><th>Owner</th><th>Updated</th></tr></thead>
+          <tbody>
+            @for (t of tickets(); track t.id) {
+              <tr (click)="open(t)" [class.sel]="selected()?.ticket?.id === t.id">
+                <td class="key">{{ t.key }}</td>
+                <td><span class="pill p{{ t.priority.charAt(1) }}">{{ t.priority }}</span></td>
+                <td><span class="cat">{{ t.category }}</span> @if (t.needsReview) { <span class="flag" title="Classified by fallback or low confidence">review</span> }</td>
+                <td class="subj">{{ t.subject }}</td>
+                <td class="muted">{{ t.requester }}</td>
+                <td>{{ t.assignee ?? 'unassigned' }}</td>
+                <td class="muted">{{ t.updatedAt | date: 'MMM d, HH:mm' }}</td>
+              </tr>
+            } @empty {
+              <tr><td colspan="7" class="empty">No tickets yet. Use "Load sample mailbox" or point the IMAP poller at the test inbox.</td></tr>
+            }
+          </tbody>
+        </table>
+      </section>
+
+      @if (selected(); as d) {
+        <aside class="detail">
+          <div class="dhead">
+            <div>
+              <div class="key">{{ d.ticket.key }} <span class="pill p{{ d.ticket.priority.charAt(1) }}">{{ d.ticket.priority }}</span></div>
+              <h2>{{ d.ticket.subject }}</h2>
+              <div class="muted">{{ d.ticket.requester }} · opened {{ d.ticket.createdAt | date: 'MMM d, HH:mm' }}</div>
+            </div>
+            <button class="ghost" (click)="close()">Close</button>
+          </div>
+
+          @if (d.ticket.summary) { <p class="summary"><b>Summary:</b> {{ d.ticket.summary }}</p> }
+          <p class="muted small">Classified by {{ d.ticket.classifiedBy }}
+            @if (d.ticket.confidence !== null) { · confidence {{ d.ticket.confidence }} }
+            @if (d.ticket.needsReview) { · <span class="flag">needs human review</span> }
+          </p>
+
+          <div class="grid">
+            <label>Status
+              <select [ngModel]="d.ticket.status" (ngModelChange)="update('status', $event)">
+                @for (s of statuses; track s) { <option [value]="s">{{ s }}</option> }
+              </select></label>
+            <label>Priority
+              <select [ngModel]="d.ticket.priority" (ngModelChange)="update('priority', $event)">
+                @for (p of priorities; track p) { <option [value]="p">{{ p }}</option> }
+              </select></label>
+            <label>Category
+              <select [ngModel]="d.ticket.category" (ngModelChange)="update('category', $event)">
+                @for (c of categories; track c) { <option [value]="c">{{ c }}</option> }
+              </select></label>
+            <label>Assignee
+              <input [ngModel]="d.ticket.assignee ?? ''" (change)="update('assignee', $any($event.target).value)" /></label>
+          </div>
+
+          @for (dr of d.drafts; track dr.id) {
+            <div class="draft" [class.done]="dr.status !== 'DRAFT'">
+              <div class="dtitle">Reply draft <span class="muted small">by {{ dr.generatedBy }}</span>
+                <span class="state s-{{ dr.status }}">{{ dr.status }}</span></div>
+              @if (dr.evidence) { <div class="muted small">Based on: {{ dr.evidence }}</div> }
+              <textarea rows="8" [disabled]="dr.status !== 'DRAFT'" [ngModel]="draftBody(dr.id, dr.body)" (ngModelChange)="editDraft(dr.id, $event)"></textarea>
+              @if (dr.status === 'DRAFT') {
+                <div class="actions">
+                  <button class="primary" [disabled]="!isApprover()" (click)="approve(dr.id, dr.body)">Approve &amp; send</button>
+                  <button class="ghost" [disabled]="!isApprover()" (click)="reject(dr.id)">Reject</button>
+                  @if (!isApprover()) { <span class="muted small">Only an approver can send. Sign in as approver.</span> }
+                  @if (stats()?.sendMode === 'capture') { <span class="muted small">Demo mode: replies are captured, not emailed.</span> }
+                </div>
+              } @else { <div class="muted small">{{ dr.status }} by {{ dr.approvedBy }}</div> }
+            </div>
+          }
+
+          <h3>Conversation</h3>
+          @for (m of d.emails; track m.id) {
+            <div class="mail">
+              <div class="mhead"><b>{{ m.fromName || m.fromAddr }}</b> <span class="muted">&lt;{{ m.fromAddr }}&gt; · {{ m.receivedAt | date: 'MMM d, HH:mm' }}</span></div>
+              <pre>{{ m.body }}</pre>
+              @if (m.attachments) { <div class="muted small">Attachments: {{ m.attachments }}</div> }
+            </div>
+          }
+
+          <h3>Notifications</h3>
+          @for (n of d.notifications; track n.id) {
+            <div class="note"><span class="chan">{{ n.channel }}</span> {{ n.target }} <span class="muted">{{ n.text }}</span></div>
+          }
+
+          <h3>Pipeline trace</h3>
+          @for (ev of d.events; track ev.id) {
+            <div class="note"><span class="chan">{{ ev.stage }}</span> {{ ev.detail }} <span class="muted">{{ ev.latencyMs }} ms · {{ ev.correlationId }}</span></div>
+          }
+
+          @if (d.audit.length) {
+            <h3>Audit</h3>
+            @for (a of d.audit; track a.id) {
+              <div class="note"><span class="chan">{{ a.actor }}</span> {{ a.action }} <span class="muted">{{ a.detail }}</span></div>
+            }
+          }
+        </aside>
+      }
+    }
+
+    @if (tab() === 'review') {
+      <section class="review">
+        <h2>Security hold <span class="count warn">{{ held().length }}</span></h2>
+        <p class="muted">Prompt injection, phishing and risky attachments. These never reached the LLM and never became tickets.</p>
+        @for (e of held(); track e.id) { <ng-container *ngTemplateOutlet="card; context: { $implicit: e, danger: true }" /> }
+        @if (!held().length) { <div class="empty">Nothing on hold.</div> }
+
+        <h2>Spam quarantine <span class="count">{{ quarantined().length }}</span></h2>
+        @for (e of quarantined(); track e.id) { <ng-container *ngTemplateOutlet="card; context: { $implicit: e, danger: false }" /> }
+        @if (!quarantined().length) { <div class="empty">No spam quarantined.</div> }
+
+        <h2>No ticket needed <span class="count">{{ noTicket().length }}</span></h2>
+        <p class="muted">Auto-replies, sales pitches, praise and unrelated mail. Logged, no ticket.</p>
+        @for (e of noTicket(); track e.id) { <ng-container *ngTemplateOutlet="card; context: { $implicit: e, danger: false }" /> }
+      </section>
+    }
+
+    @if (tab() === 'stats') {
+      <section class="stats">
+        @if (stats(); as s) {
+          <div class="cards">
+            <div class="card"><h4>LLM</h4>
+              <div>{{ s.llm.enabled ? s.llm.provider + ' / ' + s.llm.model : 'off (keyword fallback)' }}</div>
+              @if (s.llm.circuitOpen) { <div class="err">circuit open, using fallback</div> }
+              <div class="muted small">Replies: {{ s.sendMode }} mode</div></div>
+            <div class="card"><h4>Mail by outcome</h4>
+              @for (kv of entries(s.emailsByDisposition); track kv[0]) { <div class="row"><span>{{ kv[0] }}</span><b>{{ kv[1] }}</b></div> }</div>
+            <div class="card"><h4>Gate verdicts</h4>
+              @for (kv of entries(s.emailsByVerdict); track kv[0]) { <div class="row"><span>{{ verdictLabel(kv[0]) }}</span><b>{{ kv[1] }}</b></div> }</div>
+            <div class="card"><h4>Tickets by category</h4>
+              @for (kv of entries(s.ticketsByCategory); track kv[0]) { <div class="row"><span>{{ kv[0] }}</span><b>{{ kv[1] }}</b></div> }</div>
+            <div class="card"><h4>Tickets by priority</h4>
+              @for (kv of entries(s.ticketsByPriority); track kv[0]) { <div class="row"><span>{{ kv[0] }}</span><b>{{ kv[1] }}</b></div> }</div>
+            <div class="card"><h4>Stage latency (ms)</h4>
+              @for (kv of entries($any(s.latencyPercentilesMs)); track kv[0]) {
+                <div class="row"><span>{{ kv[0] }} (n={{ $any(kv[1]).n }})</span><b>p50 {{ $any(kv[1]).p50 }} · p95 {{ $any(kv[1]).p95 }}</b></div>
+              }
+              <div class="muted small">Measured from this running instance, not a benchmark.</div></div>
+          </div>
+        }
+      </section>
+    }
+  </main>
+}
+
+<ng-template #card let-e let-danger="danger">
+  <div class="rcard" [class.danger]="danger">
+    <div class="rhead">
+      <span class="pill v-{{ e.verdict }}">{{ e.verdict === "CLEAN" && e.category ? e.category : verdictLabel(e.verdict) }}</span>
+      <b>{{ e.subject }}</b>
+      <span class="muted">from {{ e.fromAddr }}</span>
+    </div>
+    <div class="muted small">Why: {{ e.verdictReason }}</div>
+    <pre>{{ e.body }}</pre>
+    @if (e.attachments) { <div class="muted small">Attachments: {{ e.attachments }}</div> }
+    @if (e.disposition !== 'NO_TICKET') {
+      <div class="actions">
+        <button class="ghost" [disabled]="!isApprover()" (click)="release(e)">Release as ticket</button>
+        <button class="ghost" [disabled]="!isApprover()" (click)="dismiss(e)">Dismiss</button>
+        @if (!isApprover()) { <span class="muted small">Approver only</span> }
+      </div>
+    }
+  </div>
+</ng-template>
