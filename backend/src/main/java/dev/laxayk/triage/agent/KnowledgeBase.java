@@ -20,7 +20,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * The vector store the agents search: product docs, client profiles and internal process notes.
  * Chunks (one per markdown file) are embedded once and persisted in the kb_chunks table together with the embedder id and a
  * content hash, so restarts only re-embed what changed. Search is cosine similarity in memory, which is the right size for
- * a few hundred chunks; at larger scale the same table moves to pgvector with an index.
+ * a few hundred chunks. With app.embed.pgvector=true on Postgres the same rows are also written to a pgvector column and
+ * searched by the database (exact cosine scan, no index needed at this size). Any pgvector error falls back to the in-memory search.
  */
 @Service
 public class KnowledgeBase {
@@ -33,12 +34,16 @@ public class KnowledgeBase {
     private final Embedder embedder;
     private final List<Chunk> chunks = new CopyOnWriteArrayList<>();
     private volatile String activeEmbedder;
+    private final boolean wantPg;
+    private volatile boolean pgOn;
 
     public KnowledgeBase(Store store, ObjectMapper mapper,
                          @Value("${app.embed.provider:hash}") String provider,
                          @Value("${app.embed.base-url:}") String baseUrl,
                          @Value("${app.embed.api-key:}") String apiKey,
-                         @Value("${app.embed.model:}") String model) {
+                         @Value("${app.embed.model:}") String model,
+                         @Value("${app.embed.pgvector:false}") boolean pgvector) {
+        this.wantPg = pgvector;
         this.store = store;
         if (!provider.equals("hash") && !model.isBlank()) {
             String base = baseUrl.isBlank() ? (provider.equals("openai") ? "https://api.openai.com/v1" : "http://localhost:11434/v1") : baseUrl;
@@ -92,6 +97,7 @@ public class KnowledgeBase {
             chunks.clear();
             chunks.addAll(fresh);
             activeEmbedder = active.id();
+            syncPg(fresh);
             log.info("Knowledge base ready: {} chunks ({} embedded, {} reused) with {}", fresh.size(), embedded, reused, active.id());
         } catch (Exception e) {
             log.error("Knowledge base indexing failed", e);
@@ -113,7 +119,23 @@ public class KnowledgeBase {
         chunks.clear();
         chunks.addAll(fresh);
         activeEmbedder = active.id();
+        syncPg(fresh);
     }
+
+    private void syncPg(List<Chunk> list) {
+        if (!wantPg) return;
+        try {
+            store.enablePgVector();
+            for (Chunk c : list) store.setEmbedding(c.source(), "[" + format(c.vector()) + "]");
+            pgOn = true;
+            log.info("pgvector search enabled for {} chunks", list.size());
+        } catch (Exception e) {
+            pgOn = false;
+            log.warn("pgvector unavailable ({}), searching in memory instead", e.getMessage());
+        }
+    }
+
+    public boolean pgvectorActive() { return pgOn; }
 
     /** Semantic-ish search. type is "doc", "client", "process" or null for everything. */
     public List<Hit> search(String query, String type, int k) {
@@ -124,6 +146,21 @@ public class KnowledgeBase {
             q = new Embedder.Hashing().embed(query);
         }
         final float[] qv = q;
+        if (pgOn) {
+            try {
+                Map<String, Chunk> bySource = new HashMap<>();
+                chunks.forEach(c -> bySource.put(c.source(), c));
+                List<Hit> out = new ArrayList<>();
+                for (Store.VecHit h : store.pgSearch("[" + format(qv) + "]", activeEmbedder, type, k)) {
+                    Chunk c = bySource.get(h.source());
+                    if (c != null && h.score() >= 0.12) out.add(new Hit(c, h.score()));
+                }
+                return out;
+            } catch (Exception e) {
+                log.warn("pgvector search failed ({}), using in-memory search", e.getMessage());
+                pgOn = false;
+            }
+        }
         return chunks.stream()
                 .filter(c -> type == null || c.type().equals(type))
                 .map(c -> new Hit(c, Embedder.cosine(qv, c.vector())))

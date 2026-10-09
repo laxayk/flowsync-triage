@@ -1,7 +1,7 @@
 # docker compose up --build   ->   http://localhost:4200
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: triage
       POSTGRES_USER: triage
@@ -24,6 +24,7 @@ services:
         required: false
     environment:
       DB_URL: jdbc:postgresql://db:5432/triage
+      PGVECTOR: ${PGVECTOR:-true}
       DB_USER: triage
       DB_PASSWORD: ${DB_PASSWORD:-triage}
       CORS_ORIGINS: http://localhost:4200

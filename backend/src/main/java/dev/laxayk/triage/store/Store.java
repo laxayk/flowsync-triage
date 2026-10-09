@@ -282,6 +282,31 @@ public class Store {
                 .params(source, type, title, sha, embedder, vector).update();
     }
 
+    // ---------- pgvector (optional, Postgres only) ----------
+    /** Enables the pgvector extension and an embedding column. Throws when the database has no pgvector. */
+    public void enablePgVector() {
+        db.sql("CREATE EXTENSION IF NOT EXISTS vector").update();
+        db.sql("ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS emb vector").update();
+    }
+
+    public void setEmbedding(String source, String vectorLiteral) {
+        db.sql("UPDATE kb_chunks SET emb = CAST(? AS vector) WHERE source=?").params(vectorLiteral, source).update();
+    }
+
+    public boolean hasEmbedding(String source) {
+        return db.sql("SELECT count(*) FROM kb_chunks WHERE source=? AND emb IS NOT NULL").param(source).query(Long.class).single() > 0;
+    }
+
+    public record VecHit(String source, double score) {}
+
+    /** Cosine nearest neighbours, computed by the database. Only rows from the given embedder are compared. */
+    public java.util.List<VecHit> pgSearch(String vectorLiteral, String embedder, String type, int k) {
+        return db.sql("SELECT source, 1 - (emb <=> CAST(? AS vector)) FROM kb_chunks WHERE emb IS NOT NULL AND embedder = ? "
+                        + "AND (CAST(? AS VARCHAR) IS NULL OR doc_type = ?) ORDER BY emb <=> CAST(? AS vector) LIMIT ?")
+                .params(vectorLiteral, embedder, type, type, vectorLiteral, k)
+                .query((rs, n) -> new VecHit(rs.getString(1), rs.getDouble(2))).list();
+    }
+
     public long countOutbox() {
         return db.sql("SELECT count(*) FROM outbox").query(Long.class).single();
     }

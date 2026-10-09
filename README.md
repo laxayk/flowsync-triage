@@ -42,7 +42,7 @@ Key choices:
 
 - **Knowledge base (vector store).** Product docs, client profiles and internal escalation processes live in `backend/src/main/resources/kb/`.
   Each file is embedded once and stored in the `kb_chunks` table with the embedder id and a content hash (restarts re-embed only what changed).
-  Search is cosine similarity in memory, which fits a few hundred chunks; the same table moves to pgvector when it grows.
+  Search is cosine similarity in memory. With `PGVECTOR=true` (the Docker default) the vectors are also stored in a pgvector column and the database does the search; any pgvector error falls back to the in-memory search. Not yet run against a real pgvector database.
   The default embedder is a local feature-hashing one (no model, no network, no RAM). It matches words, not meaning; set `EMBED_PROVIDER=ollama`
   and `EMBED_MODEL=nomic-embed-text` (or `openai`) for model embeddings.
 - **Drafting agent.** One JSON action per turn: call a tool or finish. At most 4 tool calls, invalid output twice or no finish falls back to the scripted run.
