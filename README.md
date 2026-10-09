@@ -51,6 +51,10 @@ Key choices:
 - **Owner briefing.** After a ticket is created, the department owner (`DEPARTMENTS` in `.env`, never taken from the email) gets a short brief. One per ticket.
   Goes through the same switch as replies: `SEND_MODE=capture` stores it (shown on the ticket), `live` sends it over SMTP.
 
+## Checking the real model
+
+Set `LLM_PROVIDER=groq` and `LLM_API_KEY=...` in `.env`, run `.\run.ps1`, then `.\scripts\eval-live.ps1`. It prints accuracy for the basic and messy sets and every miss, and shows whether each answer came from the model or the keyword fallback. Load the sample mailbox and open a query ticket to read the agent trace. Do this before trusting the model path: it has only been tested with a scripted fake model.
+
 ## Run it (Windows, Docker Desktop)
 
 ```powershell
