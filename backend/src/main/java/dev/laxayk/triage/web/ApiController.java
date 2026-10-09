@@ -232,7 +232,7 @@ public class ApiController {
     }
 
     @GetMapping("/eval")
-    public Map<String, Object> eval() throws Exception { return evaluator.run(); }
+    public Map<String, Object> eval(@RequestParam(defaultValue = "basic") String set) throws Exception { return evaluator.run(set); }
 
     @GetMapping("/stream")
     public SseEmitter stream() { return hub.subscribe(); }

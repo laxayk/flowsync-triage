@@ -1,0 +1,9 @@
+From: Ellen <ellen@fieldlink.example>
+To: support@flowsync.example
+Subject: Are you having issues?
+Date: Fri, 09 Oct 2026 11:18:00 +0000
+Message-ID: <m19-outage-polite@eval.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi, none of our connectors have run since 08:40 UTC, all return 503. Is there an outage? Status page says nothing.

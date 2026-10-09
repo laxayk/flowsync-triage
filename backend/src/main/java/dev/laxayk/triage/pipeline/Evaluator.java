@@ -31,17 +31,21 @@ public class Evaluator {
         this.classifier = classifier;
     }
 
-    public Map<String, Object> run() throws Exception {
+    public Map<String, Object> run() throws Exception { return run("basic"); }
+
+    /** set is "basic" (clean samples) or "messy" (forwarded chains, other languages, one-liners, injection in footers). */
+    public Map<String, Object> run(String set) throws Exception {
+        String dir = "messy".equals(set) ? "samples/eval/" : "samples/";
         List<Map<String, Object>> rows = new ArrayList<>();
         int dispOk = 0, catTotal = 0, catOk = 0, total = 0;
         long start = System.currentTimeMillis();
-        try (var r = new BufferedReader(new InputStreamReader(new ClassPathResource("samples/labels.csv").getInputStream(), StandardCharsets.UTF_8))) {
+        try (var r = new BufferedReader(new InputStreamReader(new ClassPathResource(dir + "labels.csv").getInputStream(), StandardCharsets.UTF_8))) {
             String line = r.readLine();
             while ((line = r.readLine()) != null) {
                 if (line.isBlank()) continue;
                 String[] p = line.split(",", -1);
                 ParsedEmail e;
-                try (var in = new ClassPathResource("samples/" + p[0] + ".eml").getInputStream()) { e = EmailParser.parse(in); }
+                try (var in = new ClassPathResource(dir + p[0] + ".eml").getInputStream()) { e = EmailParser.parse(in); }
                 GateResult g = gate.evaluate(e);
                 String disp = g.verdict().disposition();
                 String cat = g.verdict() == dev.laxayk.triage.domain.Verdict.CLEAN ? null : switch (g.verdict()) {
@@ -66,6 +70,7 @@ public class Evaluator {
             }
         }
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("set", set == null ? "basic" : set);
         out.put("samples", total);
         out.put("dispositionAccuracy", total == 0 ? 0 : Math.round(1000.0 * dispOk / total) / 1000.0);
         out.put("categoryAccuracy", catTotal == 0 ? 0 : Math.round(1000.0 * catOk / catTotal) / 1000.0);

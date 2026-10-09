@@ -24,4 +24,15 @@ class EvaluatorTest {
         assertTrue((double) r.get("dispositionAccuracy") >= 0.95, r.toString());
         assertTrue((double) r.get("categoryAccuracy") >= 0.9, r.toString());
     }
+
+    @Test
+    void messySetReportsHonestly() throws Exception {
+        Map<String, Object> r = evaluator.run("messy");
+        System.out.println("MESSY " + r.get("samples") + " disp=" + r.get("dispositionAccuracy") + " cat=" + r.get("categoryAccuracy"));
+        ((java.util.List<?>) r.get("rows")).forEach(x -> { if (!(boolean) ((Map<?, ?>) x).get("ok")) System.out.println("MISS " + x); });
+        assertEquals(28, r.get("samples"));
+        // The all-caps outage mail must reach a human, not the spam folder.
+        assertTrue(((java.util.List<?>) r.get("rows")).stream().anyMatch(x -> "m02-all-caps".equals(((Map<?, ?>) x).get("file")) && "TICKET".equals(((Map<?, ?>) x).get("gotDisposition"))));
+        assertTrue((double) r.get("dispositionAccuracy") >= 0.85, r.toString());
+    }
 }
