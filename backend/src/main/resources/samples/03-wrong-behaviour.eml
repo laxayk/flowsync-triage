@@ -1,0 +1,9 @@
+From: Priya Nair <priya.nair@orbitfin.example>
+To: support@flowsync.example
+Subject: Sync says success but rows are missing in target
+Date: Fri, 09 Oct 2026 09:21:00 +0000
+Message-ID: <03-wrong-behaviour@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The dashboard shows the nightly sync as successful (green) but 312 of 1,480 accounts never arrived in the Google Sheet. No errors anywhere. We rely on this sheet for finance reporting so we need this looked at. Run id: run_88213.

@@ -1,0 +1,11 @@
+From: Marcus Lee <marcus@bluepeak-logistics.example>
+To: support@flowsync.example
+Subject: Salesforce sync duplicates contacts every run
+Date: Fri, 09 Oct 2026 09:14:00 +0000
+Message-ID: <02-bug-duplicates@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Since Tuesday our Salesforce to Postgres connector inserts a new row for every contact on every run. We now have 4 copies of most contacts. The run log shows no errors. This started after we edited the mapping. Repro steps attached in the next mail if needed.
+
+Marcus

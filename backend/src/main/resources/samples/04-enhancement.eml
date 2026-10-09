@@ -1,0 +1,9 @@
+From: Tom Becker <tom@helioscloud.example>
+To: support@flowsync.example
+Subject: Feature request: dry-run preview before a sync writes
+Date: Fri, 09 Oct 2026 09:28:00 +0000
+Message-ID: <04-enhancement@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Would be great to have a dry-run preview that shows what a sync would change before it writes to the target. We are nervous about changing mappings on production data. Happy to be a design partner on this.

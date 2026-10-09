@@ -1,0 +1,14 @@
+From: Dana Whitfield <dana@northwind-retail.example>
+To: support@flowsync.example
+Subject: Sync failed after timeout - can I replay only the failed rows?
+Date: Fri, 09 Oct 2026 09:07:00 +0000
+Message-ID: <01-query-replay@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi team,
+
+Last night's HubSpot to Postgres sync timed out about 70% of the way through. Is there a way to replay just the failed rows instead of re-running the whole sync? I don't want to create duplicates.
+
+Thanks,
+Dana

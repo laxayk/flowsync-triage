@@ -1,0 +1,9 @@
+From: Hotel Desk <reservations@seaside-hotel.example>
+To: support@flowsync.example
+Subject: Your booking confirmation
+Date: Fri, 09 Oct 2026 10:45:00 +0000
+Message-ID: <15-wrong-irrelevant@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Thank you for your reservation at Seaside Hotel. Your room is confirmed for 3 nights. We look forward to welcoming you.

@@ -1,0 +1,12 @@
+From: IT Security <security@flowsync-support-team.example>
+To: support@flowsync.example
+Subject: Your FlowSync password will expire today
+Date: Fri, 09 Oct 2026 10:24:00 +0000
+Message-ID: <12-phishing@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+We detected unusual sign-in activity. Verify your account immediately or your password will expire and your account will be suspended.
+
+Click here immediately: http://192.168.44.12/flowsync/verify
+or http://bit.ly/3xFlowSync

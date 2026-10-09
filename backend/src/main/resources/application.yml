@@ -1,0 +1,50 @@
+server:
+  port: 8080
+spring:
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/triage}
+    username: ${DB_USER:triage}
+    password: ${DB_PASSWORD:triage}
+  flyway:
+    enabled: true
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+app:
+  cors-origins: ${CORS_ORIGINS:http://localhost:4200}
+  auth:
+    agent-password: ${AGENT_PASSWORD:agent123}
+    approver-password: ${APPROVER_PASSWORD:approver123}
+  llm:
+    provider: ${LLM_PROVIDER:none}
+    api-key: ${LLM_API_KEY:}
+    base-url: ${LLM_BASE_URL:}
+    model: ${LLM_MODEL:}
+    timeout-seconds: 25
+    max-concurrency: 3
+  imap:
+    enabled: ${IMAP_ENABLED:false}
+    host: ${IMAP_HOST:imap.gmail.com}
+    user: ${IMAP_USER:}
+    password: ${IMAP_PASSWORD:}
+    poll-seconds: 30
+  ingest:
+    samples-on-start: ${SAMPLES_ON_START:true}
+  notify:
+    slack-webhook: ${SLACK_WEBHOOK_URL:}
+  send:
+    mode: ${SEND_MODE:capture}
+    from: ${SEND_FROM:}

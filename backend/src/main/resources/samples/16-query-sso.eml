@@ -1,0 +1,9 @@
+From: Rhea Kapoor <rhea@loomtech.example>
+To: support@flowsync.example
+Subject: How do I set up SAML SSO and what plan do I need?
+Date: Fri, 09 Oct 2026 10:52:00 +0000
+Message-ID: <16-query-sso@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi, is it possible to enable SAML SSO for our team? Which plan includes it and where do I configure the ACS URL?

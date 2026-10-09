@@ -1,0 +1,9 @@
+From: Elena Rossi <elena@veridiant.example>
+To: support@flowsync.example
+Subject: URGENT: all our syncs are failing - production impacted
+Date: Fri, 09 Oct 2026 09:49:00 +0000
+Message-ID: <07-outage@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Every connector we have has been failing since 08:40 UTC. Salesforce, HubSpot and the warehouse sync all return 503. This is blocking our customer onboarding in production. Is there an outage? Status page shows nothing.

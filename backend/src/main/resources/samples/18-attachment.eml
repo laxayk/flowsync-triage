@@ -1,0 +1,20 @@
+From: Billing Dept <accounts@vendor-docs.example>
+To: support@flowsync.example
+Subject: Invoice attached
+Date: Fri, 09 Oct 2026 12:00:00 +0000
+Message-ID: <18-attachment@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUND"
+
+--BOUND
+Content-Type: text/plain; charset=utf-8
+
+Please find the invoice attached and open it today.
+
+--BOUND
+Content-Type: application/octet-stream; name="invoice_2231.pdf.exe"
+Content-Disposition: attachment; filename="invoice_2231.pdf.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAAMAAAAEAAAA
+--BOUND--

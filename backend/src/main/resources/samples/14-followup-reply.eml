@@ -1,0 +1,13 @@
+From: Dana Whitfield <dana@northwind-retail.example>
+To: support@flowsync.example
+Subject: Re: Sync failed after timeout - can I replay only the failed rows?
+Date: Fri, 09 Oct 2026 12:20:00 +0000
+Message-ID: <14-followup-reply@samples.flowsync>
+In-Reply-To: <01-query-replay@samples.flowsync>
+References: <01-query-replay@samples.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Thanks. I tried it and the replay worked for most rows, but 40 rows are still failing with the same timeout. Any idea?
+
+Dana
