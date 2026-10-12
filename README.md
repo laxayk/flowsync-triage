@@ -6,8 +6,11 @@ classifies what is left, turns it into tickets, notifies the owner, and drafts r
 The fictional company is **FlowSync**, a B2B SaaS that syncs records between tools customers already use
 (Salesforce/HubSpot to databases and sheets). The sample mailbox is written for that product.
 
-> Status: work in progress on `develop`. Built so far: backend pipeline, tool-using drafting agent with a vector knowledge base, owner briefings, REST API, live dashboard, Docker, tests.
-> Nothing here has been run against a real mailbox yet; the demo uses the bundled sample emails.
+> Status: complete demo build on `develop`. Works end to end on the bundled sample mailbox with no API key. Not yet verified: the Docker build, a real Groq run, real IMAP/SMTP and a real pgvector database (see Known limits).
+
+![Tickets](docs/img/tickets.png)
+
+Demo video (about 1 minute, sample data): [docs/demo.mp4](docs/demo.mp4)
 
 ## How it works
 
@@ -37,6 +40,67 @@ Key choices:
 - **The gate runs before the model.** Hostile or junk mail never reaches the LLM, which saves cost and removes the injection surface for obvious attacks. Email text is also treated as untrusted data in prompts, validated on the way out, and escaped in every sink.
 - **Replies are never auto-sent.** Default send mode is `capture` (stored in the outbox table). `live` sends via SMTP from the dedicated test mailbox.
 - **Roles.** `agent` works tickets; `approver` can send replies and release held mail. Every approval is audited with actor, draft hash and recipient.
+
+## Diagrams
+
+### Pipeline
+
+```mermaid
+flowchart TD
+    A[IMAP poll or sample .eml] --> B[Store raw mail, dedupe on Message-ID]
+    B --> C{Safety gate, rules only}
+    C -->|injection, phishing, risky attachment| H[Security hold, human review]
+    C -->|spam| Q[Quarantine]
+    C -->|auto-reply, cold sales| N[No ticket]
+    C -->|clean| T{Reply to an existing thread?}
+    T -->|yes| U[Attach to ticket, reopen, notify assignee]
+    T -->|no| K[Classify: LLM JSON, keyword fallback]
+    K -->|praise, irrelevant| N
+    K -->|ticketable| R[Create ticket, owner, priority]
+    R --> S[Notify assignee]
+    R --> D[Drafting agent: query, billing, access only]
+    R --> O[Owner briefing to department owner]
+    D --> V[Approver reviews, edits, sends]
+    V --> X[Outbox: capture or SMTP]
+```
+
+### Drafting agent loop
+
+```mermaid
+flowchart TD
+    S[Stored email, untrusted] --> M[Ask model for one JSON action]
+    M --> P{Valid action?}
+    P -->|invalid twice or no finish in 7 turns| F[Scripted fallback, same tools]
+    P -->|tool| TL[Run read-only tool]
+    TL --> L[Result appended to next prompt]
+    L -->|under 4 calls| M
+    L -->|budget used| M2[Ask for final]
+    M2 --> Z
+    P -->|final| Z[Reply, sources, needs_human]
+    F --> Z
+    Z --> H[Draft + step trace stored, human approves]
+```
+
+Tools: `search_knowledge` (vector search over docs, client profiles, process notes), `lookup_customer` (bound to the stored sender), `ticket_history`, `open_incidents`. All read-only.
+
+### Modules
+
+| Package | Role |
+|---|---|
+| `ingest` | ImapPoller, EmailParser, SampleLoader, Assigner |
+| `gate` | SafetyGate: regex rules for injection, phishing, spam, sales, auto-replies, risky attachments |
+| `llm` | One OpenAI-compatible client, Classifier, keyword HeuristicClassifier |
+| `agent` | DraftAgent, AgentTools, KnowledgeBase, Embedder, OwnerAlert, Departments |
+| `pipeline` | Pipeline orchestration, Evaluator |
+| `notify` / `store` / `web` | Notifier and Outbox, JDBC store with Flyway, REST API with auth and SSE |
+
+### Screens
+
+| Agent trace | Owner briefing |
+|---|---|
+| ![Agent trace](docs/img/agent-trace.png) | ![Owner briefing](docs/img/owner-briefing.png) |
+
+![Review queue](docs/img/review-queue.png)
 
 ## The agent layer
 
@@ -98,4 +162,7 @@ CI runs both on every push (`.github/workflows/ci.yml`).
 - The keyword fallback is deliberately simple; its accuracy has not been measured. LLM accuracy and latency are also unmeasured until the eval run is done.
 - The knowledge base is small and hand-written (6 docs, 7 client profiles, 5 process notes); retrieval quality with the hashing embedder is word-overlap, not semantic. Client data is fictional.
 - Sessions are in memory and auth is demo-grade (seeded users). Production would use SSO.
-- Not yet built: WhatsApp notifications, Gmail push (IMAP polling only), a labelled eval harness, load numbers.
+- Not run yet: the Docker build, a real Groq run (the agent loop is tested only with a scripted fake model), real IMAP/SMTP, a real pgvector database. `scripts/eval-live.ps1` measures the real model once a key is in `.env`.
+- Eval sets: 16 basic and 28 messy labelled mails. On the keyword fallback the messy set scores 0.89 disposition and 0.68 category. They are small and author-written: regression checks, not accuracy claims.
+- The regex gate is not a security boundary against a determined attacker. Read-only tools and human approval limit the damage if injection reaches the model.
+- Not built: WhatsApp notifications, Gmail push (IMAP polling only), load numbers. Demo logins are `agent123` and `approver123` by default: change them for anything shared.

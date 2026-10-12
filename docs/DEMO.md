@@ -8,7 +8,7 @@
 5b. **Agent.** On the "Sync failed after timeout" ticket, open **Agent trace** under the draft: lookup_customer (Northwind, Pro plan), search_knowledge (finds the replay doc), ticket_history. With a Groq key the model chooses these calls itself; without one the scripted run uses the same tools. On the outage ticket, scroll to **Owner briefing**: the SRE owner got a brief with the customer's SLA and the SRE escalation steps (captured, not sent).
 6. **Live updates.** Open the dashboard in two windows, click "Load sample mailbox" is a no-op the second time (idempotent). With IMAP enabled, send a mail to the test inbox and watch the ticket appear within one poll.
 7. **Fallback.** With `LLM_PROVIDER=none` everything above still works on keyword rules and tickets carry a "review" flag. With a Groq key, the same flow uses the model and the flag appears only on low-confidence results.
-8. `GET /api/eval` (with a login token) runs the labelled samples through the current classifier and returns accuracy. Report it as a regression check on a small author-written set, not production accuracy.
+8. `GET /api/eval?set=basic|messy` (with a login token) runs the labelled samples through the current classifier and returns accuracy. Report it as a regression check on a small author-written set, not production accuracy.
 
 ## What to say about the decisions
 
