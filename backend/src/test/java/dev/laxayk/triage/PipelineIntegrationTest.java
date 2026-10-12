@@ -45,6 +45,7 @@ class PipelineIntegrationTest {
         assertEquals("NO_TICKET", m.get("<09-out-of-office@samples.flowsync>").disposition());
         assertEquals("NO_TICKET", m.get("<10-sales@samples.flowsync>").disposition());
         assertEquals("NO_TICKET", m.get("<08-praise@samples.flowsync>").disposition());
+        assertEquals("TICKET", m.get("<05-billing@samples.flowsync>").disposition(), "a mail that creates a ticket is TICKET, never THREADED");
 
         // Held mail never becomes a ticket
         for (String id : List.of("13-injection", "12-phishing", "11-spam", "10-sales", "09-out-of-office"))

@@ -147,6 +147,10 @@ public class Pipeline {
         ReentrantLock lock = threadLocks[Math.floorMod(row.threadKey().hashCode(), threadLocks.length)];
         lock.lock();
         try {
+            // Re-read under the lock: the startup requeue can submit a mail the sample loader already queued,
+            // and the second worker must see the first one's result instead of treating the mail as a thread reply.
+            row = store.email(emailId).orElse(null);
+            if (row == null || !"RECEIVED".equals(row.status())) return;
             ParsedEmail e = toParsed(row);
 
             long t0 = System.nanoTime();
