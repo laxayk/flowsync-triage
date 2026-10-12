@@ -45,6 +45,7 @@ class PipelineIntegrationTest {
         assertEquals("NO_TICKET", m.get("<09-out-of-office@samples.flowsync>").disposition());
         assertEquals("NO_TICKET", m.get("<10-sales@samples.flowsync>").disposition());
         assertEquals("NO_TICKET", m.get("<08-praise@samples.flowsync>").disposition());
+        assertEquals("TICKET", m.get("<05-billing@samples.flowsync>").disposition(), "a mail that creates a ticket is TICKET, never THREADED");
 
         // Held mail never becomes a ticket
         for (String id : List.of("13-injection", "12-phishing", "11-spam", "10-sales", "09-out-of-office"))
@@ -75,6 +76,23 @@ class PipelineIntegrationTest {
         assertEquals(1, drafts.size());
         assertTrue(drafts.get(0).evidence().toLowerCase().contains("replay"));
         assertEquals("DRAFT", drafts.get(0).status());
+
+        // Drafting agent leaves a tool trace (no LLM here, so the scripted path ran the same tools)
+        var steps = store.draftSteps(drafts.get(0).id());
+        assertTrue(steps.stream().anyMatch(st -> "lookup_customer".equals(st.tool())));
+        assertTrue(steps.stream().anyMatch(st -> "search_knowledge".equals(st.tool())));
+        assertEquals("scripted", drafts.get(0).generatedBy());
+        assertTrue(drafts.get(0).body().contains("Dana"));
+
+        // Each ticket briefs its department owner exactly once, even after a threaded reply
+        
+        var mails = store.ownerMails(outage.id());
+        assertEquals(1, mails.size());
+        assertEquals("ravi@flowsync.example", mails.get(0).recipient());
+        assertTrue(mails.get(0).body().contains("Veridiant"), "brief carries the customer profile");
+        assertEquals("capture", mails.get(0).mode());
+        assertEquals("priya@flowsync.example", store.ownerMails(ticket(m, "02-bug-duplicates").id()).get(0).recipient());
+        assertEquals(1, store.ownerMails(follow.ticketId()).size());
 
         // Idempotent re-run: nothing new
         assertEquals(0, samples.load());

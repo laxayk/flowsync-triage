@@ -1,0 +1,47 @@
+# docker compose up --build   ->   http://localhost:4200
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: triage
+      POSTGRES_USER: triage
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-triage}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U triage -d triage"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/triage
+      PGVECTOR: ${PGVECTOR:-true}
+      DB_USER: triage
+      DB_PASSWORD: ${DB_PASSWORD:-triage}
+      CORS_ORIGINS: http://localhost:4200
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "4200:80"
+
+volumes:
+  dbdata:

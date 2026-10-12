@@ -1,0 +1,9 @@
+From: Ravi <ravi@technest.example>
+To: support@flowsync.example
+Subject: Locked out after SSO change
+Date: Fri, 09 Oct 2026 11:09:00 +0000
+Message-ID: <m10-sso-access@eval.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+After our IT enabled Okta, nobody on the team can sign in. We get 'user not provisioned'. Can you reset?

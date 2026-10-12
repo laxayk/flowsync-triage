@@ -7,7 +7,8 @@ import dev.laxayk.triage.gate.GateResult;
 import dev.laxayk.triage.gate.SafetyGate;
 import dev.laxayk.triage.ingest.Assigner;
 import dev.laxayk.triage.llm.Classifier;
-import dev.laxayk.triage.llm.DraftWriter;
+import dev.laxayk.triage.agent.DraftAgent;
+import dev.laxayk.triage.agent.OwnerAlert;
 import dev.laxayk.triage.notify.Notifier;
 import dev.laxayk.triage.store.Store;
 import dev.laxayk.triage.web.EventHub;
@@ -41,15 +42,17 @@ public class Pipeline {
     private final Store store;
     private final SafetyGate gate;
     private final Classifier classifier;
-    private final DraftWriter drafts;
+    private final DraftAgent drafts;
+    private final OwnerAlert ownerAlert;
     private final Assigner assigner;
     private final Notifier notifier;
     private final EventHub hub;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final ReentrantLock[] threadLocks = new ReentrantLock[64];
 
-    public Pipeline(Store store, SafetyGate gate, Classifier classifier, DraftWriter drafts, Assigner assigner,
-                    Notifier notifier, EventHub hub) {
+    public Pipeline(Store store, SafetyGate gate, Classifier classifier, DraftAgent drafts, Assigner assigner,
+                    Notifier notifier, EventHub hub, OwnerAlert ownerAlert) {
+        this.ownerAlert = ownerAlert;
         this.store = store;
         this.gate = gate;
         this.classifier = classifier;
@@ -116,6 +119,7 @@ public class Pipeline {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @org.springframework.core.annotation.Order(20)
     public void requeue() {
         for (EmailRow e : store.emailsByStatus("RECEIVED")) submit(e.id());
     }
@@ -143,6 +147,10 @@ public class Pipeline {
         ReentrantLock lock = threadLocks[Math.floorMod(row.threadKey().hashCode(), threadLocks.length)];
         lock.lock();
         try {
+            // Re-read under the lock: the startup requeue can submit a mail the sample loader already queued,
+            // and the second worker must see the first one's result instead of treating the mail as a thread reply.
+            row = store.email(emailId).orElse(null);
+            if (row == null || !"RECEIVED".equals(row.status())) return;
             ParsedEmail e = toParsed(row);
 
             long t0 = System.nanoTime();
@@ -229,10 +237,21 @@ public class Pipeline {
 
         if (EnumSet.of(Category.QUERY, Category.BILLING, Category.ACCOUNT_ACCESS).contains(c.category())) {
             long t2 = System.nanoTime();
-            DraftWriter.Draft d = drafts.write(e);
-            store.insertDraft(tid, d.body(), String.join("; ", d.evidence()), d.generatedBy());
-            store.event(row.correlationId(), row.id(), "DRAFT", "by " + d.generatedBy() + ", evidence " + d.evidence(), ms(t2));
+            try {
+                DraftAgent.Result d = drafts.write(e, c.category(), tid);
+                long draftId = store.insertDraft(tid, d.body(), String.join("; ", d.evidence()), d.generatedBy());
+                int n = 1;
+                for (DraftAgent.Step s : d.steps()) store.insertDraftStep(draftId, n++, s.kind(), s.tool(), s.args(), s.result(), s.latencyMs());
+                store.event(row.correlationId(), row.id(), "DRAFT", "by " + d.generatedBy() + ", " + d.steps().size() + " steps, evidence " + d.evidence()
+                        + (d.needsHuman() ? ", needs human" : ""), ms(t2));
+            } catch (RuntimeException ex) {
+                log.warn("Draft agent failed for {}: {}", t.key(), ex.getMessage());
+                store.event(row.correlationId(), row.id(), "DRAFT", "failed: " + ex.getClass().getSimpleName(), ms(t2));
+            }
         }
+        long t3 = System.nanoTime();
+        Optional<String> alerted = ownerAlert.alert(t, e, c.category());
+        alerted.ifPresent(to -> store.event(row.correlationId(), row.id(), "OWNER_MAIL", "briefed " + to, ms(t3)));
         return Optional.of(tid);
     }
 

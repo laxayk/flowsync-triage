@@ -26,6 +26,7 @@ public class SampleLoader {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @org.springframework.core.annotation.Order(10)
     public void onReady() {
         if (onStart) log.info("Loaded {} sample emails", load());
     }

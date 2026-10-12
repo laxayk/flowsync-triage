@@ -1,0 +1,6 @@
+# Docker-free quick run: in-memory H2 in PostgreSQL mode. Data is lost on restart. Use the default profile with Postgres for anything real.
+spring:
+  datasource:
+    url: jdbc:h2:mem:triage;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""

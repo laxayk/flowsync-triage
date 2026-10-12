@@ -1,0 +1,14 @@
+From: Chen Wei <chen@dataharbor.example>
+To: support@flowsync.example
+Subject: Duplicate records after retry
+Date: Fri, 09 Oct 2026 11:07:00 +0000
+Message-ID: <m08-bug-with-logs@eval.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Our connector creates duplicate Accounts whenever a run is retried.
+
+2026-10-08T11:02:11Z WARN retry 2/3 upsert key=email
+2026-10-08T11:02:14Z INFO created 412 records
+
+Expected: upsert on external id. Seems like a bug.

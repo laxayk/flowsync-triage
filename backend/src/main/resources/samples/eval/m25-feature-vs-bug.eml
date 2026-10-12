@@ -1,0 +1,9 @@
+From: Ivan <ivan@baltic.example>
+To: support@flowsync.example
+Subject: CSV export
+Date: Fri, 09 Oct 2026 11:24:00 +0000
+Message-ID: <m25-feature-vs-bug@eval.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Exports drop the header row. Could you add an option to include headers?

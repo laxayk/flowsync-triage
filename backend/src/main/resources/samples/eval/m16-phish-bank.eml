@@ -1,0 +1,9 @@
+From: security@flowsync-billing.example
+To: support@flowsync.example
+Subject: Verify your account
+Date: Fri, 09 Oct 2026 11:15:00 +0000
+Message-ID: <m16-phish-bank@eval.flowsync>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your account will be suspended. Verify your account and confirm your payment details now.

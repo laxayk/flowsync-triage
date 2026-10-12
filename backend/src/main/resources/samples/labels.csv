@@ -1,0 +1,17 @@
+file,expected_disposition,expected_category
+01-query-replay,TICKET,QUERY
+02-bug-duplicates,TICKET,BUG
+03-wrong-behaviour,TICKET,WRONG_BEHAVIOUR
+04-enhancement,TICKET,ENHANCEMENT
+05-billing,TICKET,BILLING
+06-access,TICKET,ACCOUNT_ACCESS
+07-outage,TICKET,OUTAGE
+08-praise,NO_TICKET,PRAISE
+09-out-of-office,NO_TICKET,IRRELEVANT
+10-sales,NO_TICKET,SALES
+11-spam,QUARANTINED,SPAM
+12-phishing,SECURITY_HOLD,
+13-injection,SECURITY_HOLD,
+15-wrong-irrelevant,NO_TICKET,IRRELEVANT
+16-query-sso,TICKET,QUERY
+18-attachment,SECURITY_HOLD,

@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * so a rate-limited free tier degrades to the heuristic fallback instead of stalling the pipeline.
  */
 @Component
-public class LlmClient {
+public class LlmClient implements Chat {
     private static final Logger log = LoggerFactory.getLogger(LlmClient.class);
 
     public static class LlmException extends Exception {
@@ -74,6 +74,7 @@ public class LlmClient {
         };
     }
 
+    @Override
     public boolean enabled() {
         if (provider.equals("none") || baseUrl.isBlank()) return false;
         return provider.equals("ollama") || !apiKey.isBlank();
@@ -83,9 +84,11 @@ public class LlmClient {
 
     public String provider() { return provider; }
 
+    @Override
     public String model() { return model; }
 
     /** Returns the assistant message content. Throws LlmException on any failure so callers can fall back. */
+    @Override
     public String chat(String system, String user, boolean json) throws LlmException {
         if (!enabled()) throw new LlmException("LLM not configured");
         if (circuitOpen()) throw new LlmException("LLM circuit open, skipping call");

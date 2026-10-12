@@ -1,0 +1,9 @@
+From: Zoe <zoe@pixelmill.example>
+To: support@flowsync.example
+Subject: Billing address change
+Date: Fri, 09 Oct 2026 11:22:00 +0000
+Message-ID: <m23-html-only@eval.flowsync>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Please change the billing address on our account to <b>12 Park Lane, Leeds</b>.</p></body></html>
