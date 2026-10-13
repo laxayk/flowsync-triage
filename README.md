@@ -126,7 +126,7 @@ Tools: `search_knowledge` (vector search over docs, client profiles, process not
   Every tool is read-only, the customer is always the stored sender (model arguments cannot redirect the lookup), and the email is treated as untrusted data. The dashboard shows the full tool trace under each draft, and **Regenerate draft** rejects the open draft and asks the agent again.
 - **Grounding check (a limited heuristic).** After the model writes a reply, numbers that appear in neither the retrieved text nor the customer's mail, and product or compliance terms (for example "real time", "SOC 2", a connector name) that no retrieved text contains, flag the draft as needs human and mark the ticket for review. The reply text is not edited. It cannot prove a reply is grounded: a wrong claim made of words that do appear in the documents passes. A person still approves every send.
 - **Unrelated mail** is never silently dropped: it stays in the review list with a "possibly unrelated" reason and can be released into a ticket. Whether it should be dropped instead is still an open policy decision.
-- **Rate limits.** Calls to Groq are spaced 2.5 s apart (`LLM_MIN_INTERVAL_MS`, 0 disables) and `Retry-After` is honoured, so a burst stays under the free tier's tokens-per-minute limit. Rate limits and bad requests do not open the circuit breaker, only outages do.
+- **Rate limits.** Calls to Groq are spaced 2.5 s apart (`LLM_MIN_INTERVAL_MS`, 0 disables) and `Retry-After` is honoured. This reduces bursts but does not guarantee the free tier's 8,000 tokens-per-minute limit: long prompts can still exceed it, and then the call is retried or the scripted fallback runs. Rate limits and bad requests do not open the circuit breaker, only outages do.
 - **Owner briefing.** After a ticket is created, the department owner (`DEPARTMENTS` in `.env`, never taken from the email) gets a short brief. One per ticket.
   Goes through the same switch as replies: `SEND_MODE=capture` stores it (shown on the ticket), `live` sends it over SMTP.
 
@@ -167,7 +167,7 @@ Secrets live in `.env` (git-ignored). `.env.example` has no real values.
 ## Tests
 
 ```bash
-cd backend && mvn test        # gate, classifier, LLM client errors and pacing, native tool calls, grounding, retrieval eval, regenerate, full sample-mailbox pipeline, API/roles/approval
+cd backend && mvn test        # gate, classifier, LLM client errors and pacing, native tool calls, grounding, retrieval eval, draft regression set (synthetic provider), regenerate, full sample-mailbox pipeline, API/roles/approval
 cd frontend && npx ng build
 ```
 
@@ -179,7 +179,9 @@ CI runs both on every push (`.github/workflows/ci.yml`).
 - Reply quality is not measured. The author saw the agent write replies and the claim check target an invented "real time" claim, but there is no score for reply accuracy yet. The keyword fallback is deliberately simple.
 - The extra "scripted" reply the author once saw next to a model reply is not explained. The code writes one draft per ticket and I could not reproduce a second one, so it stays open until there is a ticket and its "by" label.
 - Retrieval numbers above are on the fictional docs and author-written questions. Keyword plus hash vectors match words, not meaning.
-- Not verified: real SMTP sending (default is `capture`), IMAP polling over a long period, a real pgvector database. CI builds and tests the code, not the Docker images.
+- Not verified: IMAP polling over a long period and a real pgvector database. Live SMTP sending is optional and has not been run; the default `capture` mode (replies stored, nothing emailed) is the supported demo path. CI builds and tests the code, not the Docker images.
+- Draft behaviour is covered by a reproducible regression set (`DraftRegressionTest`) that uses a synthetic Groq-format provider: it checks the app's own handling (retrieval, handoff, claim check, review flag, gap log, regenerate), not how good a real model's replies are. Real reply quality is unmeasured until live runs are scored.
+- Label misses `m13` (newsletter: SALES vs SPAM) and `m25` (ENHANCEMENT vs QUERY) are left as they are on purpose: both are judgment calls in the labels, and tuning the classifier to two samples would only overfit. Say if you want either label changed.
 - Sessions are in memory and auth is demo-grade (seeded users). Demo logins are `agent123` and `approver123` by default: change them for anything shared.
 - The regex gate is not a security boundary against a determined attacker. Read-only tools, the claim check and human approval limit the damage if injection reaches the model.
 - Not built: WhatsApp notifications, Gmail push (IMAP polling only), load numbers.
