@@ -6,7 +6,9 @@ classifies what is left, turns it into tickets, notifies the owner, and drafts r
 The fictional company is **FlowSync**, a B2B SaaS that syncs records between tools customers already use
 (Salesforce/HubSpot to databases and sheets). The sample mailbox is written for that product.
 
-> Status: complete demo build on `develop`. Works end to end on the bundled sample mailbox with no API key. Not yet verified: the Docker build, a real Groq run, real IMAP/SMTP and a real pgvector database (see Known limits).
+> Status: demo build on `main`. Works end to end on the bundled sample mailbox with no API key. The author has run it with Groq (see Known limits for what was measured). Still not verified: real SMTP sending, long-running IMAP polling and a real pgvector database.
+
+**What is real and what is invented.** The app (gate, classifier, pipeline, drafting agent, retrieval, dashboard) is real software. FlowSync, its customers, plans, connectors and docs are fictional and exist only to test it. The docs state that FlowSync is a demo product and claim no certifications.
 
 ![Tickets](docs/img/tickets.png)
 
@@ -26,7 +28,9 @@ virtual-thread worker (per-thread lock)
         falls back to keyword rules when the LLM is off, slow or invalid (ticket is flagged "needs review")
    4. Ticket + owner + priority + notifications (Slack webhook, email captured)
    5. Drafting agent (query, billing, access mail): the LLM picks read-only tools in a bounded loop (search_knowledge, lookup_customer,
-      ticket_history, open_incidents), then writes the reply. Scripted run of the same tools when no LLM. Sent only after an APPROVER clicks approve
+      ticket_history, open_incidents), then writes the reply. If no document answers, the draft is a short handoff reply flagged for a person.
+      A limited claim check flags numbers and product terms that the retrieved text does not contain. Scripted run of the same tools when no LLM
+      (the draft says why the model was not used). Sent only after an APPROVER clicks approve
    6. Owner briefing: an email to the owning department's owner with the ticket, customer plan/SLA and the department's escalation process
         |
         v
@@ -70,13 +74,19 @@ flowchart TD
 flowchart TD
     S[Stored email, untrusted] --> M[Ask model for one JSON action]
     M --> P{Valid action?}
-    P -->|invalid twice or no finish in 7 turns| F[Scripted fallback, same tools]
+    P -->|model error, invalid twice or no finish in 7 turns| F[Scripted fallback, same tools, reason shown on the draft]
     P -->|tool| TL[Run read-only tool]
     TL --> L[Result appended to next prompt]
     L -->|under 4 calls| M
     L -->|budget used| M2[Ask for final]
     M2 --> Z
-    P -->|final| Z[Reply, sources, needs_human]
+    P -->|final| G{Any document cleared the relevance bar?}
+    G -->|no| HO[Handoff reply, needs human, logged as a knowledge gap]
+    G -->|yes| CK[Claim check: numbers and product terms must appear in the retrieved text]
+    CK -->|unsupported| FL[Reply kept, flagged needs human with the unsupported terms]
+    CK --> Z[Reply, sources, needs_human]
+    FL --> Z
+    HO --> Z
     F --> Z
     Z --> H[Draft + step trace stored, human approves]
 ```
@@ -104,20 +114,25 @@ Tools: `search_knowledge` (vector search over docs, client profiles, process not
 
 ## The agent layer
 
-- **Knowledge base (vector store).** Product docs, client profiles and internal escalation processes live in `backend/src/main/resources/kb/`.
-  Each file is embedded once and stored in the `kb_chunks` table with the embedder id and a content hash (restarts re-embed only what changed).
-  Search is cosine similarity in memory. With `PGVECTOR=true` (the Docker default) the vectors are also stored in a pgvector column and the database does the search; any pgvector error falls back to the in-memory search. Not yet run against a real pgvector database.
-  The default embedder is a local feature-hashing one (no model, no network, no RAM). It matches words, not meaning; set `EMBED_PROVIDER=ollama`
-  and `EMBED_MODEL=nomic-embed-text` (or `openai`) for model embeddings.
-- **Drafting agent.** One JSON action per turn: call a tool or finish. At most 4 tool calls, invalid output twice or no finish falls back to the scripted run.
-  Every tool is read-only, the customer is always the stored sender (model arguments cannot redirect the lookup), and the email is treated as untrusted data.
-  The dashboard shows the full tool trace under each draft.
+- **Knowledge base.** `backend/src/main/resources/kb/` holds 25 fictional FlowSync product docs, 7 client profiles and 5 escalation process notes.
+  Product docs are split by `## ` section so one chunk answers one question; each doc carries `plan`, `tags` and `reviewed` front matter that is searched too.
+  Chunks are embedded once and stored in `kb_chunks` with the embedder id and a content hash (restarts re-embed only what changed).
+  **Search is hybrid:** BM25 keyword ranking and vector similarity are merged with reciprocal rank fusion. A hit's score is the weighted share of the question's terms found in the chunk,
+  and a chunk under the bar (`KnowledgeBase.MIN_RELEVANCE`, 0.30) is not returned, so "no document answers this" is a real outcome. The default embedder is a local feature-hashing one (no model, no network, no RAM); it matches words, not meaning,
+  which is why the keyword half matters. Groq has no embeddings endpoint. A hosted or local embedding model can be set with `EMBED_PROVIDER` and `EMBED_MODEL`, but it is not recommended on an 8 GB laptop and not needed so far.
+  With `PGVECTOR=true` vectors are also written to a pgvector column (not yet run against a real pgvector database); search itself runs in memory.
+  The bar and weights were picked on 41 author-written questions (`backend/src/test/resources/kb-eval.tsv`, run by `KbEvalTest`): against the old whole-file vectors, hit@1 went 24 to 32 and hit@3 33 to 37 of 37 answerable questions, and 4 of 4 unanswerable questions were handed off instead of 2 of 4. The author also wrote the docs, and one doc tag was added after a miss, so this is a regression check, not a benchmark.
+- **Drafting agent.** With Groq/OpenAI/Ollama the tools are declared as native functions plus `final_reply` (the earlier JSON-in-text protocol made gpt-oss on Groq answer `tool_use_failed`); other providers keep the JSON protocol. At most 4 tool calls; a model error, invalid output or no finish falls back to the scripted run, and the draft's "by" label says why.
+  Every tool is read-only, the customer is always the stored sender (model arguments cannot redirect the lookup), and the email is treated as untrusted data. The dashboard shows the full tool trace under each draft, and **Regenerate draft** rejects the open draft and asks the agent again.
+- **Grounding check (a limited heuristic).** After the model writes a reply, numbers that appear in neither the retrieved text nor the customer's mail, and product or compliance terms (for example "real time", "SOC 2", a connector name) that no retrieved text contains, flag the draft as needs human and mark the ticket for review. The reply text is not edited. It cannot prove a reply is grounded: a wrong claim made of words that do appear in the documents passes. A person still approves every send.
+- **Unrelated mail** is never silently dropped: it stays in the review list with a "possibly unrelated" reason and can be released into a ticket. Whether it should be dropped instead is still an open policy decision.
+- **Rate limits.** Calls to Groq are spaced 2.5 s apart (`LLM_MIN_INTERVAL_MS`, 0 disables) and `Retry-After` is honoured, so a burst stays under the free tier's tokens-per-minute limit. Rate limits and bad requests do not open the circuit breaker, only outages do.
 - **Owner briefing.** After a ticket is created, the department owner (`DEPARTMENTS` in `.env`, never taken from the email) gets a short brief. One per ticket.
   Goes through the same switch as replies: `SEND_MODE=capture` stores it (shown on the ticket), `live` sends it over SMTP.
 
 ## Checking the real model
 
-Set `LLM_PROVIDER=groq` and `LLM_API_KEY=...` in `.env`, run `.\run.ps1`, then `.\scripts\eval-live.ps1`. It prints accuracy for the basic and messy sets and every miss, and shows whether each answer came from the model or the keyword fallback. Load the sample mailbox and open a query ticket to read the agent trace. Do this before trusting the model path: it has only been tested with a scripted fake model.
+Set `LLM_PROVIDER=groq` and `LLM_API_KEY=...` in `.env`, run `.\run.ps1`, then `.\scripts\eval-live.ps1`. It prints accuracy for the basic and messy sets and every miss, and shows whether each answer came from the model or the keyword fallback. Send test mails one at a time (the free tier has a tokens-per-minute limit) and avoid re-running `eval-live` back to back. Open a query ticket to read the agent trace; the draft's "by" label shows whether the model or the scripted fallback wrote it, and the Stats panel shows the last model error.
 
 ## Run it (Windows, Docker Desktop)
 
@@ -141,7 +156,8 @@ cd frontend && npm install && npm start                          # http://localh
 | Setting | Purpose |
 |---|---|
 | `LLM_PROVIDER` `LLM_API_KEY` `LLM_MODEL` `LLM_BASE_URL` | `groq`, `openai`, `ollama` or `none` (keyword fallback). Check the provider's current free-tier limits yourself. |
-| `IMAP_ENABLED` `IMAP_USER` `IMAP_PASSWORD` | Poll a **dedicated test Gmail** (app password). Do not point this at a real inbox. |
+| `IMAP_ENABLED` `IMAP_USER` `IMAP_PASSWORD` | Poll a **dedicated test Gmail** (app password). Do not point this at a real inbox. The poller reads unread mail and marks it read. `IMAP_MAX_AGE_DAYS` skips older unread mail, and a mail that cannot be parsed is skipped until restart so it cannot block the ones behind it. |
+| `LLM_MIN_INTERVAL_MS` | Spacing between model calls. Default 2500 for Groq, 0 otherwise. |
 | `SEND_MODE` `SEND_FROM` `SMTP_*` | `capture` (default) or `live`. |
 | `SLACK_WEBHOOK_URL` | Optional. Without it, notifications are recorded in the dashboard only. |
 | `AGENT_PASSWORD` `APPROVER_PASSWORD` | Demo logins. Change them if the app is reachable by anyone else. |
@@ -151,7 +167,7 @@ Secrets live in `.env` (git-ignored). `.env.example` has no real values.
 ## Tests
 
 ```bash
-cd backend && mvn test        # gate and classifier unit tests, full sample-mailbox pipeline test, API/roles/approval test
+cd backend && mvn test        # gate, classifier, LLM client errors and pacing, native tool calls, grounding, retrieval eval, regenerate, full sample-mailbox pipeline, API/roles/approval
 cd frontend && npx ng build
 ```
 
@@ -159,10 +175,11 @@ CI runs both on every push (`.github/workflows/ci.yml`).
 
 ## Known limits (honest list)
 
-- The keyword fallback is deliberately simple; its accuracy has not been measured. LLM accuracy and latency are also unmeasured until the eval run is done.
-- The knowledge base is small and hand-written (6 docs, 7 client profiles, 5 process notes); retrieval quality with the hashing embedder is word-overlap, not semantic. Client data is fictional.
-- Sessions are in memory and auth is demo-grade (seeded users). Production would use SSO.
-- Not run yet: the Docker build, a real Groq run (the agent loop is tested only with a scripted fake model), real IMAP/SMTP, a real pgvector database. `scripts/eval-live.ps1` measures the real model once a key is in `.env`.
-- Eval sets: 16 basic and 28 messy labelled mails. On the keyword fallback the messy set scores 0.89 disposition and 0.68 category. They are small and author-written: regression checks, not accuracy claims.
-- The regex gate is not a security boundary against a determined attacker. Read-only tools and human approval limit the damage if injection reaches the model.
-- Not built: WhatsApp notifications, Gmail push (IMAP polling only), load numbers. Demo logins are `agent123` and `approver123` by default: change them for anything shared.
+- Measured by the author on Groq (`openai/gpt-oss-20b`): classification on the basic set 1.0 disposition and 1.0 category (16 mails); on the messy set 1.0 disposition and 0.92 category (28 mails, 18 answered by the model, 5 by the keyword fallback, 5 by the gate). Misses: `m13` (SALES vs SPAM) and `m25` (ENHANCEMENT vs QUERY). These sets are small and author-written: regression checks, not accuracy claims.
+- Reply quality is not measured. The author saw the agent write replies and the claim check target an invented "real time" claim, but there is no score for reply accuracy yet. The keyword fallback is deliberately simple.
+- The extra "scripted" reply the author once saw next to a model reply is not explained. The code writes one draft per ticket and I could not reproduce a second one, so it stays open until there is a ticket and its "by" label.
+- Retrieval numbers above are on the fictional docs and author-written questions. Keyword plus hash vectors match words, not meaning.
+- Not verified: real SMTP sending (default is `capture`), IMAP polling over a long period, a real pgvector database. CI builds and tests the code, not the Docker images.
+- Sessions are in memory and auth is demo-grade (seeded users). Demo logins are `agent123` and `approver123` by default: change them for anything shared.
+- The regex gate is not a security boundary against a determined attacker. Read-only tools, the claim check and human approval limit the damage if injection reaches the model.
+- Not built: WhatsApp notifications, Gmail push (IMAP polling only), load numbers.

@@ -42,6 +42,7 @@ app:
     user: ${IMAP_USER:}
     password: ${IMAP_PASSWORD:}
     poll-seconds: 30
+    max-age-days: ${IMAP_MAX_AGE_DAYS:0}
   ingest:
     samples-on-start: ${SAMPLES_ON_START:true}
   notify:

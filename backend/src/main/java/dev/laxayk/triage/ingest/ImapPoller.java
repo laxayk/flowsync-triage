@@ -23,10 +23,16 @@ public class ImapPoller {
     private final String host, user, password, folder;
     private final int port, maxPerPoll;
 
+    private final int maxAgeDays;
+    /** UIDs of messages that failed to parse. They stay unread in the mailbox but are skipped, so one bad mail cannot block the backlog behind it. */
+    private final java.util.Set<Long> poison = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public ImapPoller(Pipeline pipeline, @Value("${app.imap.enabled:false}") boolean enabled,
                       @Value("${app.imap.host:imap.gmail.com}") String host, @Value("${app.imap.port:993}") int port,
                       @Value("${app.imap.user:}") String user, @Value("${app.imap.password:}") String password,
-                      @Value("${app.imap.folder:INBOX}") String folder, @Value("${app.imap.max-per-poll:25}") int maxPerPoll) {
+                      @Value("${app.imap.folder:INBOX}") String folder, @Value("${app.imap.max-per-poll:25}") int maxPerPoll,
+                      @Value("${app.imap.max-age-days:0}") int maxAgeDays) {
+        this.maxAgeDays = maxAgeDays;
         this.pipeline = pipeline;
         this.enabled = enabled;
         this.host = host;
@@ -52,17 +58,25 @@ public class ImapPoller {
             store.connect(host, port, user, password);
             try (Folder f = store.getFolder(folder)) {
                 f.open(Folder.READ_WRITE);
-                Message[] unread = f.search(new jakarta.mail.search.FlagTerm(new Flags(Flags.Flag.SEEN), false));
-                int count = 0;
+                jakarta.mail.search.SearchTerm term = new jakarta.mail.search.FlagTerm(new Flags(Flags.Flag.SEEN), false);
+                if (maxAgeDays > 0)
+                    term = new jakarta.mail.search.AndTerm(term, new jakarta.mail.search.ReceivedDateTerm(jakarta.mail.search.ComparisonTerm.GE,
+                            java.util.Date.from(java.time.Instant.now().minus(java.time.Duration.ofDays(maxAgeDays)))));
+                Message[] unread = f.search(term);
+                int count = 0, skipped = 0;
                 for (Message m : unread) {
+                    long uid = f instanceof jakarta.mail.UIDFolder u ? u.getUID(m) : -1;
+                    if (uid >= 0 && poison.contains(uid)) { skipped++; continue; }
                     if (count++ >= maxPerPoll) break;
                     try {
                         pipeline.ingest(EmailParser.parse(new MimeMessage((MimeMessage) m)), "imap");
                         m.setFlag(Flags.Flag.SEEN, true);
                     } catch (Exception e) {
-                        log.warn("Skipping one message that could not be parsed: {}", e.getClass().getSimpleName());
+                        if (uid >= 0) poison.add(uid);
+                        log.warn("Skipping one message that could not be parsed ({}); it stays unread and is not retried until restart", e.getClass().getSimpleName());
                     }
                 }
+                if (skipped > 0) log.info("IMAP poll skipped {} previously failed message(s)", skipped);
                 if (count > 0) log.info("IMAP poll handled {} message(s)", Math.min(count, maxPerPoll));
             }
         } catch (Exception e) {
