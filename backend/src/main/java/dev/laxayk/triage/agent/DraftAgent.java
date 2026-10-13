@@ -124,6 +124,7 @@ public class DraftAgent {
         StringBuilder observations = new StringBuilder();
         int toolCalls = 0, invalid = 0;
         boolean docHit = false;
+        StringBuilder outputs = new StringBuilder(); // tool results only: the model's own search words must not count as support
         String emailBlock = promptEmail(e);
         for (int turn = 0; turn < MAX_TOOL_CALLS + 3; turn++) {
             String user = emailBlock + (observations.length() == 0 ? "" : "\n\nTool results so far:\n" + observations)
@@ -156,7 +157,7 @@ public class DraftAgent {
                     steps.add(new Step("check", "relevance_bar", null, "no document cleared the relevance bar; handoff reply used", 0));
                     return new Result(handoff(e), List.of(), "agent:" + llm.model(), steps, true, List.of("no document answered this question"), true);
                 }
-                List<String> bad = unsupportedClaims(reply, observations.toString(), e.subject() + " " + e.body());
+                List<String> bad = unsupportedClaims(reply, outputs.toString(), e.subject() + " " + e.body());
                 if (!bad.isEmpty()) {
                     human = true;
                     warnings.add("not found in the retrieved documents: " + String.join(", ", bad));
@@ -172,6 +173,7 @@ public class DraftAgent {
                 String out = tools.run(tool, args, ctx);
                 long toolMs = (System.nanoTime() - t1) / 1_000_000;
                 toolCalls++;
+                outputs.append(out).append('\n');
                 if (tool.equals("search_knowledge") && !out.startsWith("No matching") && !out.startsWith("ERROR")) docHit = true;
                 steps.add(new Step("tool", tool, clip(args.toString(), 300), clip(out, 700), ms + toolMs));
                 observations.append("[").append(toolCalls).append("] ").append(tool).append(args.toString()).append(" ->\n").append(out).append("\n");
