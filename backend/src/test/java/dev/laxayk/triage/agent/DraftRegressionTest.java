@@ -136,6 +136,27 @@ class DraftRegressionTest {
         assertEquals(2, events(t).stream().filter(e -> e.startsWith("DRAFT_CHECK")).count(), "the claim check ran again on the new draft");
     }
 
+    /** Prompt rule only: a fixture cannot show a real model obeys it. The real-model slip (saying scripts cannot start a sync) is a live observation. */
+    @Test void bothPromptsTellTheModelToAnswerOnlyWhatWasAsked() {
+        for (String p : List.of(DraftAgent.SYSTEM, DraftAgent.SYSTEM_NATIVE)) {
+            assertTrue(p.contains("Answer only what the customer asked"));
+            assertTrue(p.contains("exact thing"));
+        }
+    }
+
+    @Test void startingARunAndTheMissingInboundWebhookAreBothInTheDocs() {
+        var all = kbText();
+        assertTrue(all.contains("Run now") && all.contains("POST /v1/connectors/{id}/runs"));
+        assertTrue(all.contains("Starting a run yourself IS available"));
+    }
+
+    private String kbText() {
+        try (var in = DraftRegressionTest.class.getResourceAsStream("/kb/docs/12-manual-runs.md");
+             var in2 = DraftRegressionTest.class.getResourceAsStream("/kb/docs/25-known-limitations.md")) {
+            return new String(in.readAllBytes()) + new String(in2.readAllBytes());
+        } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
     @Test void unrelatedMailCreatesNoTicketNoDraftAndWaitsInReviewWithAVisibleReason() {
         pipeline.ingest(new ParsedEmail("<un@t>", null, null, "reservations@seaside-hotel.example", "Hotel Desk", "support@flowsync.example",
                 "Your booking confirmation", "Your room is confirmed for 3 nights. SCENARIO-IRRELEVANT", Instant.now(), false, List.of()), "test");
