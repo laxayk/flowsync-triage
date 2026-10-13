@@ -1,0 +1,41 @@
+Does FlowSync sync in real time?	02-sync-schedules-limits
+How often can a sync run on the Pro plan?	02-sync-schedules-limits
+Why was my scheduled run skipped?	02-sync-schedules-limits
+Which connectors do you support?	07-what-is-flowsync
+Can FlowSync connect to Google Sheets?	11-connector-google-sheets
+Do you have a connector for Excel or MySQL?	07-what-is-flowsync
+Can I use Google Sheets as a source on the Starter plan?	11-connector-google-sheets
+Which Salesforce objects can I sync?	08-connector-salesforce
+Does the HubSpot connector sync deals?	09-connector-hubspot
+How do I connect my Postgres database and is SSL required?	10-connector-postgres
+Can I run a sync manually from the dashboard?	12-manual-runs
+How do I start a run through the API?	13-api-and-webhooks
+Do you offer webhooks when a run fails?	13-api-and-webhooks
+My run timed out, how do I retry only the failed rows?	01-replay-failed-rows
+How long are failed rows kept?	01-replay-failed-rows
+We are getting duplicate contacts in the target	03-duplicate-contacts
+Our SAML SSO login fails with an assertion error	04-sso-and-invites
+The invite link expired	04-sso-and-invites
+I was charged twice this month, can I get a refund?	05-billing
+How do I change the billing email or tax ID?	05-billing
+Is there a dry run preview before I save a mapping?	06-field-mapping-and-dry-run
+What is the difference between the Pro and Business plans?	15-plans-and-limits
+How do I cancel my subscription?	16-changing-plan-cancelling
+Are you SOC 2 certified?	17-security-overview
+Where is my data stored and can I choose an EU region?	18-data-residency-retention
+What can a viewer role do?	19-roles-permissions
+Is there an audit log of who changed a connector?	20-audit-log
+Can I get an email when a run fails?	21-alerts-notifications
+Our Salesforce connector says authentication expired	22-auth-errors
+Which date format does FlowSync send?	23-field-types-transformations
+What are your support hours for the Business plan?	24-support-hours-sla
+What does a Partial run status mean?	14-run-history-statuses
+Can FlowSync run custom Salesforce objects?	25-known-limitations
+Do you have a mobile app for iOS?	NONE
+What is the price of the Pro plan in euros?	15-plans-and-limits
+Can you recommend a good pizza place nearby?	NONE
+Does FlowSync integrate with Snowflake?	07-what-is-flowsync
+Can you sign a data processing agreement for us?	18-data-residency-retention
+What is the weather like in Mumbai?	NONE
+Can FlowSync send SMS messages to my customers?	NONE
+Do you support single sign-on with Okta?	04-sso-and-invites

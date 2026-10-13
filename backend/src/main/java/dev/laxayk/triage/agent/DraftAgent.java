@@ -153,7 +153,9 @@ public class DraftAgent {
         String question = e.subject() + " " + e.body();
 
         String customer = run(steps, "lookup_customer", "{}", ctx);
-        String docs = run(steps, "search_knowledge", "{\"query\":" + quote(question) + ",\"scope\":\"docs\"}", ctx);
+        // The subject is a short, focused query; a whole email dilutes the relevance score, so it is only the second try.
+        String docs = run(steps, "search_knowledge", "{\"query\":" + quote(e.subject() == null ? "" : e.subject()) + ",\"scope\":\"docs\"}", ctx);
+        if (docs.startsWith("No matching")) docs = run(steps, "search_knowledge", "{\"query\":" + quote(question) + ",\"scope\":\"docs\"}", ctx);
         String incidents = category == Category.OUTAGE || category == Category.BUG ? run(steps, "open_incidents", "{}", ctx) : "";
         run(steps, "ticket_history", "{}", ctx);
 

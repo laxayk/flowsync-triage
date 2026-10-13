@@ -59,67 +59,70 @@ public class KnowledgeBase {
         reindex();
     }
 
+    /** One searchable piece of a file before embedding. Product docs are split by "## " section, everything else stays whole. */
+    record Raw(String source, String type, String title, String text, Map<String, String> fields) {}
+
+    static List<Raw> split(String rel, String type, String text) {
+        String docTitle = text.lines().findFirst().orElse(rel).replaceFirst("^#\\s*", "");
+        if (!type.equals("doc") || !text.contains("\n## ")) return List.of(new Raw(rel, type, docTitle, text, fields(text)));
+        List<Raw> out = new ArrayList<>();
+        String[] parts = text.split("(?m)^## ");
+        Map<String, String> meta = fields(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            String heading = parts[i].lines().findFirst().orElse("").trim();
+            String body = parts[i].lines().skip(1).filter(l -> !l.isBlank()).reduce((x, y) -> x + "\n" + y).orElse("");
+            String title = docTitle + " > " + heading;
+            out.add(new Raw(rel + "#" + i, type, title, title + "\n" + body, meta));
+        }
+        return out;
+    }
+
     public synchronized void reindex() {
         Embedder active = embedder;
-        List<Chunk> fresh = new ArrayList<>();
         try {
             Resource[] all = new PathMatchingResourcePatternResolver().getResources("classpath:/kb/**/*.md");
             Arrays.sort(all, Comparator.comparing(r -> String.valueOf(r.getDescription())));
-            int embedded = 0, reused = 0;
+            List<Raw> raws = new ArrayList<>();
             for (Resource r : all) {
                 String path = r.getURL().toString();
                 String rel = path.substring(path.indexOf("/kb/") + 4);
                 String type = rel.startsWith("clients/") ? "client" : rel.startsWith("processes/") ? "process" : "doc";
-                String text = new String(r.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-                String title = text.lines().findFirst().orElse(rel).replaceFirst("^#\\s*", "");
-                String sha = sha(text);
-                float[] vec = null;
-                var cached = store.kbChunk(rel);
-                if (cached.isPresent() && cached.get().sha().equals(sha) && cached.get().embedder().equals(active.id())) {
-                    vec = parse(cached.get().vector());
-                    reused++;
-                }
-                if (vec == null) {
-                    try {
-                        vec = active.embed(title + "\n" + text);
-                    } catch (Exception e) {
-                        log.warn("Embedder {} failed ({}), switching to local hashing for the whole index", active.id(), e.getMessage());
-                        active = new Embedder.Hashing();
-                        fresh.clear();
-                        reindexWith(active, all);
-                        return;
-                    }
-                    store.upsertKbChunk(rel, type, title, sha, active.id(), format(vec));
-                    embedded++;
-                }
-                fresh.add(new Chunk(rel, type, title, text, fields(text), vec));
+                raws.addAll(split(rel, type, new String(r.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim()));
             }
+            List<Chunk> fresh = embedAll(raws, active);
+            if (fresh == null) { active = new Embedder.Hashing(); fresh = embedAll(raws, active); }
             chunks.clear();
             chunks.addAll(fresh);
             activeEmbedder = active.id();
+            lexical = new Lexical(fresh);
             syncPg(fresh);
-            log.info("Knowledge base ready: {} chunks ({} embedded, {} reused) with {}", fresh.size(), embedded, reused, active.id());
+            log.info("Knowledge base ready: {} chunks with {}", fresh.size(), active.id());
         } catch (Exception e) {
             log.error("Knowledge base indexing failed", e);
         }
     }
 
-    private void reindexWith(Embedder active, Resource[] all) throws Exception {
+    /** Embeds every piece (reusing stored vectors when text and embedder are unchanged). Null when the embedder failed. */
+    private List<Chunk> embedAll(List<Raw> raws, Embedder active) {
         List<Chunk> fresh = new ArrayList<>();
-        for (Resource r : all) {
-            String path = r.getURL().toString();
-            String rel = path.substring(path.indexOf("/kb/") + 4);
-            String type = rel.startsWith("clients/") ? "client" : rel.startsWith("processes/") ? "process" : "doc";
-            String text = new String(r.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            String title = text.lines().findFirst().orElse(rel).replaceFirst("^#\\s*", "");
-            float[] vec = active.embed(title + "\n" + text);
-            store.upsertKbChunk(rel, type, title, sha(text), active.id(), format(vec));
-            fresh.add(new Chunk(rel, type, title, text, fields(text), vec));
+        for (Raw r : raws) {
+            String sha = sha(r.text());
+            float[] vec = null;
+            var cached = store.kbChunk(r.source());
+            if (cached.isPresent() && cached.get().sha().equals(sha) && cached.get().embedder().equals(active.id())) vec = parse(cached.get().vector());
+            if (vec == null) {
+                try {
+                    vec = active.embed(r.title() + "\n" + r.text());
+                } catch (Exception e) {
+                    if (active instanceof Embedder.Hashing) throw new IllegalStateException(e);
+                    log.warn("Embedder {} failed ({}), switching to local hashing for the whole index", active.id(), e.getMessage());
+                    return null;
+                }
+                store.upsertKbChunk(r.source(), r.type(), r.title(), sha, active.id(), format(vec));
+            }
+            fresh.add(new Chunk(r.source(), r.type(), r.title(), r.text(), r.fields(), vec));
         }
-        chunks.clear();
-        chunks.addAll(fresh);
-        activeEmbedder = active.id();
-        syncPg(fresh);
+        return fresh;
     }
 
     private void syncPg(List<Chunk> list) {
@@ -137,8 +140,21 @@ public class KnowledgeBase {
 
     public boolean pgvectorActive() { return pgOn; }
 
-    /** Semantic-ish search. type is "doc", "client", "process" or null for everything. */
+    /** Minimum relevance (0..1, share of the question's weighted terms found in the chunk) for a chunk to count as an answer. */
+    public static final double MIN_RELEVANCE = 0.30;
+
+    private volatile Lexical lexical = new Lexical(List.of());
+
+    /**
+     * Hybrid search: BM25 keyword ranking and vector similarity are merged with reciprocal rank fusion. A hit's score is the
+     * weighted share of the question's terms that the chunk contains, which is what the minimum-relevance bar is applied to.
+     * type is "doc", "client", "process" or null for everything.
+     */
     public List<Hit> search(String query, String type, int k) {
+        return search(query, type, k, MIN_RELEVANCE);
+    }
+
+    public List<Hit> search(String query, String type, int k, double minRelevance) {
         float[] q;
         try {
             q = (activeEmbedder != null && activeEmbedder.startsWith("http-") ? embedder : new Embedder.Hashing()).embed(query);
@@ -146,27 +162,28 @@ public class KnowledgeBase {
             q = new Embedder.Hashing().embed(query);
         }
         final float[] qv = q;
-        if (pgOn) {
-            try {
-                Map<String, Chunk> bySource = new HashMap<>();
-                chunks.forEach(c -> bySource.put(c.source(), c));
-                List<Hit> out = new ArrayList<>();
-                for (Store.VecHit h : store.pgSearch("[" + format(qv) + "]", activeEmbedder, type, k)) {
-                    Chunk c = bySource.get(h.source());
-                    if (c != null && h.score() >= 0.12) out.add(new Hit(c, h.score()));
-                }
-                return out;
-            } catch (Exception e) {
-                log.warn("pgvector search failed ({}), using in-memory search", e.getMessage());
-                pgOn = false;
-            }
+        List<Chunk> pool = chunks.stream().filter(c -> type == null || c.type().equals(type)).toList();
+        Lexical lx = lexical;
+        Map<Chunk, Double> bm = new HashMap<>(), cov = new HashMap<>(), cos = new HashMap<>();
+        for (Chunk c : pool) {
+            double[] l = lx.score(query, c);
+            bm.put(c, l[0]);
+            cov.put(c, l[1]);
+            cos.put(c, (double) Embedder.cosine(qv, c.vector()));
         }
-        return chunks.stream()
-                .filter(c -> type == null || c.type().equals(type))
-                .map(c -> new Hit(c, Embedder.cosine(qv, c.vector())))
-                .filter(h -> h.score() >= 0.12)
-                .sorted(Comparator.comparingDouble(Hit::score).reversed())
-                .limit(k).toList();
+        Map<Chunk, Double> fused = new HashMap<>();
+        rank(pool, bm, fused);
+        rank(pool, cos, fused);
+        return pool.stream()
+                .filter(c -> cov.get(c) >= minRelevance)
+                .sorted(Comparator.comparingDouble((Chunk c) -> fused.get(c)).reversed())
+                .limit(k).map(c -> new Hit(c, cov.get(c))).toList();
+    }
+
+    private static void rank(List<Chunk> pool, Map<Chunk, Double> scores, Map<Chunk, Double> fused) {
+        List<Chunk> order = pool.stream().filter(c -> scores.get(c) > 0).sorted(Comparator.comparingDouble((Chunk c) -> scores.get(c)).reversed()).toList();
+        for (int i = 0; i < order.size(); i++) fused.merge(order.get(i), 1.0 / (60 + i + 1), Double::sum);
+        for (Chunk c : pool) fused.putIfAbsent(c, 0.0);
     }
 
     /** Exact lookup of a client profile by the sender's email domain. */
