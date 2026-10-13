@@ -1,51 +1,49 @@
 # FlowSync Triage
 
-AI email triage agent. It watches one support inbox, screens every mail for spam, phishing and prompt injection,
-classifies what is left, turns it into tickets, notifies the owner, and drafts replies that a human approves with one click.
+An AI agent for a support inbox. It reads incoming mail, screens it for spam, phishing and prompt injection, works out what each mail is about, opens tickets with an owner and priority, and drafts replies from a knowledge base. A person reviews and approves every reply before anything is sent.
 
-The fictional company is **FlowSync**, a B2B SaaS that syncs records between tools customers already use
-(Salesforce/HubSpot to databases and sheets). The sample mailbox is written for that product.
+I built it as a working example of an agentic workflow with a human in the loop: the model is used where judgement helps (classifying, drafting) and plain rules and code are used where predictability matters (safety checks, routing, sending).
 
-> Status: demo build on `main`. Works end to end on the bundled sample mailbox with no API key. The author has run it with Groq (see Known limits for what was measured). Still not verified: real SMTP sending, long-running IMAP polling and a real pgvector database.
+**What is real and what is made up.** The app (safety gate, classifier, pipeline, drafting agent, retrieval, dashboard) is real software. **FlowSync**, its customers, plans, connectors and docs are fictional. They exist so the agent has a product to support, and the docs claim no certifications.
 
-**What is real and what is invented.** The app (gate, classifier, pipeline, drafting agent, retrieval, dashboard) is real software. FlowSync, its customers, plans, connectors and docs are fictional and exist only to test it. The docs state that FlowSync is a demo product and claim no certifications.
+Stack: Java 21 and Spring Boot, Angular, Postgres. The default model is Groq (`openai/gpt-oss-20b`) and the provider is swappable.
 
-![Tickets](docs/img/tickets.png)
+Demo recording (about 4 minutes, local run with a stand-in model provider, captions on screen): [docs/demo.mp4](docs/demo.mp4)
 
-Demo video (about 1 minute, sample data): [docs/demo.mp4](docs/demo.mp4)
+## What it does
 
-## How it works
+- **Reads mail** from an IMAP inbox (a dedicated test Gmail) or from the bundled sample mailbox. Each mail is stored once; duplicates are dropped on Message-ID.
+- **Safety gate (rules only, before any model).** Prompt injection, phishing links and risky attachments go to a security hold. Spam goes to quarantine. Auto-replies and cold sales pitches are logged with no ticket.
+- **Thread matching.** A reply to a mail that already has a ticket is attached to it (In-Reply-To, References, or a matching "Re:" subject from the same sender). The ticket is reopened and the assignee is notified.
+- **Classification.** The model returns JSON that is validated: QUERY, BUG, WRONG_BEHAVIOUR, ENHANCEMENT, BILLING, ACCOUNT_ACCESS, OUTAGE, or PRAISE, SPAM, SALES, IRRELEVANT (no ticket). If the model is off, slow or returns something invalid, keyword rules take over and the ticket is flagged for review.
+- **Tickets.** Category, priority (P1 to P4), owner from a routing table (never taken from the email), notification trail, pipeline trace with per-stage latency.
+- **Drafted replies.** For query, billing and access mail, the model runs a short loop with read-only tools (`lookup_customer`, `search_knowledge`, `ticket_history`, `open_incidents`), then writes the reply. Every step is shown on the ticket. If no document answers the question, the draft is a short handoff reply flagged for a person.
+- **Claim check.** Numbers and product terms in a draft that appear in neither the retrieved text nor the customer's mail flag the draft for human review. The text is kept, not edited.
+- **Human approval.** Only an approver can send. Edits are allowed. Every approval is audited with actor, draft hash and recipient, and a draft can be sent once.
+- **Regenerate draft.** Rejects the open draft and asks the agent again; the old draft stays as history.
+- **Review queue.** Held, quarantined and no-ticket mail stay visible with the reason. An approver can release any of them as a ticket (flagged for review) or dismiss it. Mail the model calls unrelated is kept there with a "possibly unrelated" reason, never silently dropped.
+- **Owner briefing.** When a ticket is created, the owning department gets a short brief with the customer's plan, SLA and the escalation steps.
+- **Stats.** Model and send mode, knowledge base size, mail by outcome, gate verdicts, tickets by category and priority, and stage latency (p50 and p95) measured on the running instance.
+- **Live dashboard.** Updates over server-sent events.
+
+## How a mail flows
 
 ```
 IMAP inbox / sample .eml files
-        |  store raw mail (dedupe on Message-ID)           <- emails table is the durable queue
+        |  store raw mail (dedupe on Message-ID)            <- the emails table is the durable queue
         v
-virtual-thread worker (per-thread lock)
-   1. Safety gate (rules, no LLM)   prompt injection / phishing / risky attachment -> SECURITY HOLD
-                                    spam -> QUARANTINE;  auto-reply / cold sales -> NO TICKET
-   2. Thread match                  In-Reply-To / References / subject -> attach to existing ticket
-   3. Classify (LLM, JSON, validated) QUERY BUG WRONG_BEHAVIOUR ENHANCEMENT BILLING ACCOUNT_ACCESS OUTAGE | PRAISE SPAM SALES IRRELEVANT
-        falls back to keyword rules when the LLM is off, slow or invalid (ticket is flagged "needs review")
-   4. Ticket + owner + priority + notifications (Slack webhook, email captured)
-   5. Drafting agent (query, billing, access mail): the LLM picks read-only tools in a bounded loop (search_knowledge, lookup_customer,
-      ticket_history, open_incidents), then writes the reply. If no document answers, the draft is a short handoff reply flagged for a person.
-      A limited claim check flags numbers and product terms that the retrieved text does not contain. Scripted run of the same tools when no LLM
-      (the draft says why the model was not used). Sent only after an APPROVER clicks approve
-   6. Owner briefing: an email to the owning department's owner with the ticket, customer plan/SLA and the department's escalation process
+worker (virtual thread, one lock per thread)
+   1. Safety gate (rules)      injection / phishing / risky attachment -> SECURITY HOLD
+                               spam -> QUARANTINE;  auto-reply / cold sales -> NO TICKET
+   2. Thread match             reply to a ticketed thread -> attach, reopen, notify
+   3. Classify (model, JSON)   keyword fallback if the model is off or invalid (ticket flagged)
+   4. Ticket, owner, priority, notifications
+   5. Draft (query, billing, access): tools -> reply -> claim check  (or handoff if no doc answers)
+   6. Owner briefing to the department owner
         |
         v
-Angular dashboard (live updates over SSE), audit log, pipeline trace per mail
+Dashboard: a person edits, approves, rejects or regenerates. Approve -> outbox (capture) or SMTP (live)
 ```
-
-Key choices:
-
-- **Java 21 / Spring Boot, Angular, Postgres.** Chosen for experience and for typed concurrency; the LLM call dominates latency, so workers are virtual threads and the pipeline is queue-based.
-- **One OpenAI-compatible LLM client.** Groq (default, free tier), OpenAI and Ollama differ only by base URL, model and key. No key means the keyword fallback runs, and the app still works.
-- **The gate runs before the model.** Hostile or junk mail never reaches the LLM, which saves cost and removes the injection surface for obvious attacks. Email text is also treated as untrusted data in prompts, validated on the way out, and escaped in every sink.
-- **Replies are never auto-sent.** Default send mode is `capture` (stored in the outbox table). `live` sends via SMTP from the dedicated test mailbox.
-- **Roles.** `agent` works tickets; `approver` can send replies and release held mail. Every approval is audited with actor, draft hash and recipient.
-
-## Diagrams
 
 ### Pipeline
 
@@ -98,90 +96,102 @@ Tools: `search_knowledge` (vector search over docs, client profiles, process not
 | Package | Role |
 |---|---|
 | `ingest` | ImapPoller, EmailParser, SampleLoader, Assigner |
-| `gate` | SafetyGate: regex rules for injection, phishing, spam, sales, auto-replies, risky attachments |
+| `gate` | SafetyGate: rules for injection, phishing, spam, sales, auto-replies, risky attachments |
 | `llm` | One OpenAI-compatible client, Classifier, keyword HeuristicClassifier |
 | `agent` | DraftAgent, AgentTools, KnowledgeBase, Embedder, OwnerAlert, Departments |
 | `pipeline` | Pipeline orchestration, Evaluator |
 | `notify` / `store` / `web` | Notifier and Outbox, JDBC store with Flyway, REST API with auth and SSE |
 
-### Screens
+## Design choices
 
-| Agent trace | Owner briefing |
-|---|---|
-| ![Agent trace](docs/img/agent-trace.png) | ![Owner briefing](docs/img/owner-briefing.png) |
+- **The gate runs before the model.** Obvious attacks never reach the LLM, which saves cost and shrinks the injection surface. Mail text is also treated as untrusted data in prompts, validated on the way out and escaped in every sink.
+- **Agentic only where it helps.** The model picks tools only for drafting, with read-only tools and a step cap. Classification fallback, safety and routing are fixed steps.
+- **Replies are never sent automatically.** The default send mode is `capture` (stored in the outbox table). `live` sends over SMTP.
+- **One OpenAI-compatible client.** Groq, OpenAI and Ollama differ only by base URL, model and key. With no key the keyword fallback runs and the app still works.
+- **Workers are virtual threads and the queue is a table.** The model call dominates latency. This has not been load-tested.
 
-![Review queue](docs/img/review-queue.png)
+## Knowledge base and retrieval
 
-## The agent layer
+`backend/src/main/resources/kb/` holds 25 fictional product docs, 7 client profiles and 5 escalation notes. Product docs are split by `## ` section so one chunk answers one question, and each carries `plan`, `tags` and `reviewed` front matter that is searched too.
 
-- **Knowledge base.** `backend/src/main/resources/kb/` holds 25 fictional FlowSync product docs, 7 client profiles and 5 escalation process notes.
-  Product docs are split by `## ` section so one chunk answers one question; each doc carries `plan`, `tags` and `reviewed` front matter that is searched too.
-  Chunks are embedded once and stored in `kb_chunks` with the embedder id and a content hash (restarts re-embed only what changed).
-  **Search is hybrid:** BM25 keyword ranking and vector similarity are merged with reciprocal rank fusion. A hit's score is the weighted share of the question's terms found in the chunk,
-  and a chunk under the bar (`KnowledgeBase.MIN_RELEVANCE`, 0.30) is not returned, so "no document answers this" is a real outcome. The default embedder is a local feature-hashing one (no model, no network, no RAM); it matches words, not meaning,
-  which is why the keyword half matters. Groq has no embeddings endpoint. A hosted or local embedding model can be set with `EMBED_PROVIDER` and `EMBED_MODEL`, but it is not recommended on an 8 GB laptop and not needed so far.
-  With `PGVECTOR=true` vectors are also written to a pgvector column (not yet run against a real pgvector database); search itself runs in memory.
-  The bar and weights were picked on 43 author-written questions (`backend/src/test/resources/kb-eval.tsv`, run by `KbEvalTest`): against the old whole-file vectors, hit@1 went 24 to 31 and hit@3 34 to 39 of 39 answerable questions, and 4 of 4 unanswerable questions were handed off instead of 2 of 4. The author also wrote the docs, and one doc tag was added after a miss, so this is a regression check, not a benchmark.
-- **Drafting agent.** With Groq/OpenAI/Ollama the tools are declared as native functions plus `final_reply` (the earlier JSON-in-text protocol made gpt-oss on Groq answer `tool_use_failed`); other providers keep the JSON protocol. At most 4 tool calls; a model error, invalid output or no finish falls back to the scripted run, and the draft's "by" label says why.
-  Every tool is read-only, the customer is always the stored sender (model arguments cannot redirect the lookup), and the email is treated as untrusted data. The dashboard shows the full tool trace under each draft, and **Regenerate draft** rejects the open draft and asks the agent again.
-- **Grounding check (a limited heuristic).** After the model writes a reply, numbers that appear in neither the retrieved text nor the customer's mail, and product or compliance terms (for example "real time", "SOC 2", a connector name) that no retrieved text contains, flag the draft as needs human and mark the ticket for review. The reply text is not edited. It cannot prove a reply is grounded: a wrong claim made of words that do appear in the documents passes. A person still approves every send.
-- **Unrelated mail** is never silently dropped: it stays in the review list with a "possibly unrelated" reason and can be released into a ticket. Whether it should be dropped instead is still an open policy decision.
-- **Rate limits.** Calls to Groq are spaced 2.5 s apart (`LLM_MIN_INTERVAL_MS`, 0 disables) and `Retry-After` is honoured. This reduces bursts but does not guarantee the free tier's 8,000 tokens-per-minute limit: long prompts can still exceed it, and then the call is retried or the scripted fallback runs. Rate limits and bad requests do not open the circuit breaker, only outages do.
-- **Owner briefing.** After a ticket is created, the department owner (`DEPARTMENTS` in `.env`, never taken from the email) gets a short brief. One per ticket.
-  Goes through the same switch as replies: `SEND_MODE=capture` stores it (shown on the ticket), `live` sends it over SMTP.
+Search is hybrid: BM25 keyword ranking and vector similarity are merged with reciprocal rank fusion. A chunk scoring under the relevance bar (`KnowledgeBase.MIN_RELEVANCE`, 0.30) is not returned, so "no document answers this" is a real outcome and leads to the handoff reply. The default embedder is a local feature-hashing one (no model, no network), so it matches words, not meaning; the keyword half is what carries most queries. Groq has no embeddings endpoint. `EMBED_PROVIDER` and `EMBED_MODEL` can point at another embedder. With `PGVECTOR=true`, vectors are also written to a pgvector column; search itself runs in memory.
 
-## Checking the real model
+I picked the bar and weights on 43 questions I wrote against the docs (`backend/src/test/resources/kb-eval.tsv`, run by `KbEvalTest`). Against whole-file vectors, hit@1 went 24 to 31 and hit@3 34 to 39 of 39 answerable questions, and 4 of 4 unanswerable questions were handed off instead of 2 of 4. I wrote both the docs and the questions, and added one doc tag after a miss, so this is a regression check, not a benchmark.
 
-Set `LLM_PROVIDER=groq` and `LLM_API_KEY=...` in `.env`, run `.\run.ps1`, then `.\scripts\eval-live.ps1`. It prints accuracy for the basic and messy sets and every miss, and shows whether each answer came from the model or the keyword fallback. Send test mails one at a time (the free tier has a tokens-per-minute limit) and avoid re-running `eval-live` back to back. Open a query ticket to read the agent trace; the draft's "by" label shows whether the model or the scripted fallback wrote it, and the Stats panel shows the last model error.
+## Run it
 
-## Run it (Windows, Docker Desktop)
+You need Docker Desktop (Windows, PowerShell 5.1+). On the first run `run.ps1` creates `.env` from `.env.example`, which means: model off, replies captured, sample mailbox only.
 
 ```powershell
+git pull
 .\run.ps1
 ```
 
-That copies `.env.example` to `.env` on first run, builds and starts Postgres, backend and dashboard, then opens http://localhost:4200.
-Sign in as `agent` or `approver` (demo passwords are in `.env`). The sample mailbox loads on start, or use **Load sample mailbox**.
-`.\run.ps1 -Down` stops it, `.\run.ps1 -Logs` follows backend logs. Same thing on any OS: `docker compose up --build`.
+It builds and starts Postgres, the backend and the dashboard, then opens http://localhost:4200. `.\run.ps1 -Down` stops it and `.\run.ps1 -Logs` follows the backend log. On any OS: `docker compose up --build`.
 
-### Without Docker (quick look)
+Without Docker (quick look, in-memory H2, data is lost on restart):
 
 ```bash
-cd backend && SPRING_PROFILES_ACTIVE=h2 mvn spring-boot:run      # in-memory H2, data lost on restart
-cd frontend && npm install && npm start                          # http://localhost:4200, proxies /api to :8080
+cd backend && SPRING_PROFILES_ACTIVE=h2 mvn spring-boot:run
+cd frontend && npm install && npm start      # http://localhost:4200, proxies /api to :8080
 ```
+
+### Using the dashboard
+
+1. Sign in as `agent` or `approver`. The demo passwords come from `.env` (defaults `agent123` and `approver123`; change them if anyone else can reach the app).
+2. Click **Load sample mailbox**, or enable IMAP (below) and send a mail to the test inbox. Tickets appear live.
+3. Open a ticket: read the classification, the draft, the **Agent trace**, the conversation, the owner briefing and the pipeline trace.
+4. As an approver, edit and **Approve & send**, or **Reject**, or **Regenerate draft**. As an agent those buttons are disabled.
+5. **Review queue** shows held, quarantined and no-ticket mail with reasons. Approvers can **Release as ticket** or **Dismiss**.
+6. **Stats** shows the running totals and latency.
+
+### Turning on the real model
+
+Set these in `.env`, then restart (`.\run.ps1`):
+
+```
+LLM_PROVIDER=groq
+LLM_API_KEY=<your key>
+```
+
+Then run `.\scripts\eval-live.ps1`: it runs the labelled sample sets against the running app, prints accuracy and every miss, and shows whether each answer came from the model or the keyword fallback. The free Groq tier has a tokens-per-minute limit, so send test mails one at a time and avoid running `eval-live` twice back to back. The draft's "by" label tells you whether the model or the scripted fallback wrote it, and Stats shows the last model error.
+
+### Reading a test mailbox
+
+Set `IMAP_ENABLED=true`, `IMAP_USER` and `IMAP_PASSWORD` (a Gmail app password) for a **dedicated test inbox**. The poller reads unread mail and marks it read, so never point it at a real inbox. `IMAP_MAX_AGE_DAYS` skips older unread mail, and a mail that cannot be parsed is skipped until restart so it cannot block the ones behind it.
 
 ## Configuration (`.env`)
 
 | Setting | Purpose |
 |---|---|
 | `LLM_PROVIDER` `LLM_API_KEY` `LLM_MODEL` `LLM_BASE_URL` | `groq`, `openai`, `ollama` or `none` (keyword fallback). Check the provider's current free-tier limits yourself. |
-| `IMAP_ENABLED` `IMAP_USER` `IMAP_PASSWORD` | Poll a **dedicated test Gmail** (app password). Do not point this at a real inbox. The poller reads unread mail and marks it read. `IMAP_MAX_AGE_DAYS` skips older unread mail, and a mail that cannot be parsed is skipped until restart so it cannot block the ones behind it. |
 | `LLM_MIN_INTERVAL_MS` | Spacing between model calls. Default 2500 for Groq, 0 otherwise. |
-| `SEND_MODE` `SEND_FROM` `SMTP_*` | `capture` (default) or `live`. |
+| `IMAP_ENABLED` `IMAP_HOST` `IMAP_USER` `IMAP_PASSWORD` `IMAP_MAX_AGE_DAYS` | Test inbox polling. |
+| `SEND_MODE` `SEND_FROM` `SMTP_*` | `capture` (default, nothing is emailed) or `live` (SMTP). Live sending is optional. |
 | `SLACK_WEBHOOK_URL` | Optional. Without it, notifications are recorded in the dashboard only. |
-| `AGENT_PASSWORD` `APPROVER_PASSWORD` | Demo logins. Change them if the app is reachable by anyone else. |
+| `DEPARTMENTS` | Owner email per department for owner briefings. |
+| `AGENT_PASSWORD` `APPROVER_PASSWORD` `DB_PASSWORD` | Demo logins and database password. |
+| `EMBED_PROVIDER` `EMBED_MODEL` `EMBED_BASE_URL` `EMBED_API_KEY` `PGVECTOR` | Knowledge base embeddings. Default is the built-in local hash embedder. |
 
-Secrets live in `.env` (git-ignored). `.env.example` has no real values.
+Secrets live in `.env`, which is git-ignored. `.env.example` has no real values.
 
 ## Tests
 
 ```bash
-cd backend && mvn test        # gate, classifier, LLM client errors and pacing, native tool calls, grounding, retrieval eval, draft regression set (synthetic provider), regenerate, full sample-mailbox pipeline, API/roles/approval
+cd backend && mvn test
 cd frontend && npx ng build
 ```
 
-CI runs both on every push (`.github/workflows/ci.yml`).
+The backend tests cover the gate, classifier, model client errors and pacing, native tool calls, the grounding check, retrieval evaluation, a draft regression set, regenerate, the full sample-mailbox pipeline, and the API with roles and approval. The draft regression set (`DraftRegressionTest`) uses a synthetic provider that speaks the Groq format. It checks how the app handles replies (retrieval, handoff, claim check, review flag, gap log, regenerate, unrelated mail), not how good a real model's replies are. CI runs both commands on every push (`.github/workflows/ci.yml`).
 
-## Known limits (honest list)
+## Known limits
 
-- Measured by the author on Groq (`openai/gpt-oss-20b`): classification on the basic set 1.0 disposition and 1.0 category (16 mails); on the messy set 1.0 disposition and 0.92 category (28 mails, 18 answered by the model, 5 by the keyword fallback, 5 by the gate). Misses: `m13` (SALES vs SPAM) and `m25` (ENHANCEMENT vs QUERY). These sets are small and author-written: regression checks, not accuracy claims.
-- Reply quality is not measured. The author saw the agent write replies and the claim check target an invented "real time" claim, but there is no score for reply accuracy yet. The keyword fallback is deliberately simple.
-- The extra "scripted" reply the author once saw next to a model reply is not explained. The code writes one draft per ticket and I could not reproduce a second one, so it stays open until there is a ticket and its "by" label.
-- Retrieval numbers above are on the fictional docs and author-written questions. Keyword plus hash vectors match words, not meaning.
-- Not verified: IMAP polling over a long period and a real pgvector database. Live SMTP sending is optional and has not been run; the default `capture` mode (replies stored, nothing emailed) is the supported demo path. CI builds and tests the code, not the Docker images.
-- Draft behaviour is covered by a reproducible regression set (`DraftRegressionTest`) that uses a synthetic Groq-format provider: it checks the app's own handling (retrieval, handoff, claim check, review flag, gap log, regenerate), not how good a real model's replies are. Real reply quality is unmeasured until live runs are scored.
-- Label misses `m13` (newsletter: SALES vs SPAM) and `m25` (ENHANCEMENT vs QUERY) are left as they are on purpose: both are judgment calls in the labels, and tuning the classifier to two samples would only overfit. Say if you want either label changed.
-- Sessions are in memory and auth is demo-grade (seeded users). Demo logins are `agent123` and `approver123` by default: change them for anything shared.
-- The regex gate is not a security boundary against a determined attacker. Read-only tools, the claim check and human approval limit the damage if injection reaches the model.
-- Not built: WhatsApp notifications, Gmail push (IMAP polling only), load numbers.
+- **Measured on Groq** (`openai/gpt-oss-20b`): classification on the basic set scored 1.0 disposition and 1.0 category (16 mails); on the messy set 1.0 disposition and 0.92 category (28 mails; 18 answered by the model, 5 by the keyword fallback, 5 by the gate). Misses: `m13` (SALES vs SPAM) and `m25` (ENHANCEMENT vs QUERY). I left both labels as they are: they are judgment calls, and tuning to two samples would only overfit. These sets are small and written by me, so they are regression checks, not accuracy claims.
+- **Reply quality is not measured.** I have read real model drafts and caught one that said scripts could not start a sync (it can; the prompt and docs were tightened). There is no score for reply accuracy.
+- **The claim check is a heuristic.** It catches invented numbers and product terms. It cannot tell that a sentence built from words that do appear is wrong.
+- **Follow-ups are limited.** A reply to a ticketed thread is attached and reopens the ticket, but it does not re-classify, change priority or write a new draft. **Regenerate** works from the first mail on the ticket only.
+- **Rate limits.** Model calls are spaced 2.5 s apart on Groq and `Retry-After` is honoured. That reduces bursts but does not guarantee the free tier's 8,000 tokens-per-minute limit. If a call fails, the scripted fallback writes the draft and says why on the draft.
+- **Retrieval** runs on fictional docs and my own questions. Keyword plus hash vectors match words, not meaning.
+- **Not verified:** long-running IMAP polling, a real pgvector database, and live SMTP sending. CI builds and tests the code, not the Docker images. Capture mode is the supported path.
+- **Security.** Sessions are in memory and auth is demo-grade (seeded users). The regex gate is not a security boundary against a determined attacker; read-only tools, the claim check and human approval limit the damage if injection reaches the model.
+- **Not built:** WhatsApp notifications, Gmail push (IMAP polling only), load testing.

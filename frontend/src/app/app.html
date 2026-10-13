@@ -234,7 +234,7 @@
     <div class="muted small">Why: {{ e.verdictReason }}</div>
     <pre>{{ e.body }}</pre>
     @if (e.attachments) { <div class="muted small">Attachments: {{ e.attachments }}</div> }
-    @if (e.disposition !== 'NO_TICKET') {
+    @if (e.disposition !== 'DISMISSED') {
       <div class="actions">
         <button class="ghost" [disabled]="!isApprover()" (click)="release(e)">Release as ticket</button>
         <button class="ghost" [disabled]="!isApprover()" (click)="dismiss(e)">Dismiss</button>
