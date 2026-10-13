@@ -32,6 +32,33 @@ public class AgentTools {
         this.store = store;
     }
 
+    /** The same tools as native function definitions (OpenAI-compatible "tools" array), plus final_reply to finish. */
+    public static java.util.List<Map<String, Object>> toolSpecs() {
+        java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
+        out.add(fn("search_knowledge", CATALOG.get("search_knowledge").replaceFirst("^args:[^.]*\\.\\s*", ""),
+                Map.of("query", Map.of("type", "string"), "scope", Map.of("type", "string", "enum", java.util.List.of("docs", "processes", "all"))),
+                java.util.List.of("query")));
+        for (String t : java.util.List.of("lookup_customer", "ticket_history", "open_incidents")) {
+            out.add(fn(t, CATALOG.get(t).replaceFirst("^args:[^.]*\\.\\s*", ""), Map.of(), java.util.List.of()));
+        }
+        out.add(fn("final_reply", "Finish: the reply email to send to the customer (a human reviews it first).",
+                Map.of("reply", Map.of("type", "string", "description", "plain-text email body, friendly, under 150 words, signed FlowSync Support"),
+                        "sources", Map.of("type", "array", "items", Map.of("type", "string")),
+                        "needs_human", Map.of("type", "boolean")),
+                java.util.List.of("reply", "needs_human")));
+        return out;
+    }
+
+    private static Map<String, Object> fn(String name, String description, Map<String, Object> props, java.util.List<String> required) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("type", "object");
+        params.put("properties", props);
+        params.put("required", required);
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("name", name); f.put("description", description); f.put("parameters", params);
+        return Map.of("type", "function", "function", f);
+    }
+
     public static String catalogText() {
         return CATALOG.entrySet().stream().map(e -> "- " + e.getKey() + " " + e.getValue()).collect(Collectors.joining("\n"));
     }

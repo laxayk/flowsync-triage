@@ -88,6 +88,14 @@ public class LlmClient implements Chat {
     /** Most recent failure reason (already redacted) or empty; shown on the Stats tab so a fallback is never a mystery. */
     public String lastError() { return lastError; }
 
+    @Override
+    public boolean nativeTools() { return true; }
+
+    @Override
+    public String agentTurn(String system, String user, List<Map<String, Object>> toolSpecs) throws LlmException {
+        return chatInternal(system, user, false, toolSpecs);
+    }
+
     public boolean circuitOpen() { return System.currentTimeMillis() < openUntil.get(); }
 
     public String provider() { return provider; }
@@ -98,6 +106,10 @@ public class LlmClient implements Chat {
     /** Returns the assistant message content. Throws LlmException on any failure so callers can fall back. */
     @Override
     public String chat(String system, String user, boolean json) throws LlmException {
+        return chatInternal(system, user, json, null);
+    }
+
+    private String chatInternal(String system, String user, boolean json, List<Map<String, Object>> tools) throws LlmException {
         if (!enabled()) throw new LlmException("LLM not configured");
         if (circuitOpen()) throw new LlmException("LLM circuit open, skipping call");
         try {
@@ -107,7 +119,7 @@ public class LlmClient implements Chat {
             throw new LlmException("interrupted", e);
         }
         try {
-            String out = callWithRetry(system, user, json);
+            String out = callWithRetry(system, user, json, tools);
             consecutiveFailures.set(0);
             lastError = "";
             return out;
@@ -124,17 +136,17 @@ public class LlmClient implements Chat {
         }
     }
 
-    private String callWithRetry(String system, String user, boolean json) throws LlmException {
+    private String callWithRetry(String system, String user, boolean json, List<Map<String, Object>> tools) throws LlmException {
         LlmException last = null;
         boolean jsonMode = json;
         String sys = system;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
-                return call(sys, user, jsonMode);
+                return call(sys, user, jsonMode, tools);
             } catch (RetryableException e) {
                 last = e.outage ? new LlmException(e.getMessage()) : LlmException.rejected(e.getMessage());
-                if (e.nudge && !sys.endsWith(NUDGE)) {
-                    sys = sys + NUDGE;
+                if (e.nudge && !sys.endsWith(NUDGE) && !sys.endsWith(NUDGE_TOOLS)) {
+                    sys = sys + (tools != null ? NUDGE_TOOLS : NUDGE);
                     log.warn("LLM tried native tool calling ({}), retrying once with a reminder", e.getMessage());
                     continue;
                 }
@@ -152,6 +164,8 @@ public class LlmClient implements Chat {
 
     /** Some models (gpt-oss on Groq) answer with their native tool-call format even though no tools are declared; Groq rejects that with 400 tool_use_failed. */
     static final String NUDGE = "\n\nImportant: do not use native function or tool calling. Reply with exactly one JSON object as text, using the action format above.";
+
+    static final String NUDGE_TOOLS = "\n\nImportant: respond only by calling exactly one of the provided functions with valid JSON arguments.";
 
     private static class RetryableException extends Exception {
         final long waitMs;
@@ -199,6 +213,26 @@ public class LlmClient implements Chat {
         }
     }
 
+    /** A native function call (name + JSON arguments, usually a string) as this app's action message. */
+    String actionFromToolCall(String name, JsonNode arguments) throws LlmException {
+        try {
+            JsonNode args = arguments.isTextual() ? mapper.readTree(arguments.asText().isBlank() ? "{}" : arguments.asText()) : arguments;
+            if (!args.isObject()) args = mapper.createObjectNode();
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            if (name.equals("final_reply")) {
+                out.put("action", "final");
+                out.put("reply", args.path("reply").asText(""));
+                out.put("sources", args.path("sources"));
+                out.put("needs_human", args.path("needs_human").asBoolean(false));
+            } else {
+                out.put("action", "tool"); out.put("tool", name); out.put("args", args);
+            }
+            return mapper.writeValueAsString(out);
+        } catch (java.io.IOException e) {
+            throw LlmException.rejected("model sent unreadable function arguments for " + name);
+        }
+    }
+
     /** "LLM HTTP 400: <provider error message>", clipped and with anything key-shaped removed. The request is never included. */
     String describeError(int status, String body) {
         String msg = "";
@@ -222,14 +256,15 @@ public class LlmClient implements Chat {
         }).orElse(1500L);
     }
 
-    private String call(String system, String user, boolean json) throws LlmException, RetryableException {
+    private String call(String system, String user, boolean json, List<Map<String, Object>> tools) throws LlmException, RetryableException {
         try {
             Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("model", model);
             body.put("temperature", 0);
             body.put("messages", List.of(Map.of("role", "system", "content", system),
                     Map.of("role", "user", "content", user)));
-            if (json) body.put("response_format", Map.of("type", "json_object"));
+            if (json && tools == null) body.put("response_format", Map.of("type", "json_object"));
+            if (tools != null) { body.put("tools", tools); body.put("tool_choice", "auto"); }
             HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
                     .timeout(Duration.ofSeconds(timeoutSeconds))
                     .header("Content-Type", "application/json")
@@ -247,11 +282,15 @@ public class LlmClient implements Chat {
                 if (salvaged != null) { log.info("LLM tool_use_failed: recovered the model's tool call"); return salvaged; }
                 throw new RetryableException(describeError(sc, resp.body()), 0, false, true, false);
             }
-            if (sc == 400 && json && resp.body().contains("json_validate_failed")) {
+            if (sc == 400 && json && tools == null && (resp.body().contains("json_validate_failed") || resp.body().contains("output_parse_failed"))) {
                 throw new RetryableException(describeError(sc, resp.body()), 0, true, false, false);
             }
             if (sc >= 400) throw LlmException.rejected(describeError(sc, resp.body()));
             JsonNode root = mapper.readTree(resp.body());
+            if (tools != null) {
+                JsonNode call = root.path("choices").path(0).path("message").path("tool_calls").path(0).path("function");
+                if (call.has("name")) return actionFromToolCall(call.path("name").asText(), call.path("arguments"));
+            }
             JsonNode content = root.path("choices").path(0).path("message").path("content");
             if (content.isMissingNode() || content.asText().isBlank()) throw new LlmException("empty LLM response");
             return content.asText();
