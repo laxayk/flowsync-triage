@@ -8,7 +8,9 @@ I built it as a working example of an agentic workflow with a human in the loop:
 
 Stack: Java 21 and Spring Boot, Angular, Postgres. The default model is Groq (`openai/gpt-oss-20b`) and the provider is swappable.
 
-Demo recording (about 4 minutes, local run with a stand-in model provider, captions on screen): [docs/demo.mp4](docs/demo.mp4)
+Demo recording (about 4 minutes, captions on screen): [docs/demo.mp4](docs/demo.mp4)
+
+> **About the recording.** It is a real run of this app (backend, dashboard, database) with the bundled sample mailbox. The model responses in it come from a scripted local provider, not a live Groq or OpenAI call, so the model name on the Stats screen is only a label and the recording says nothing about real reply quality. Replies are captured in the outbox and nothing is emailed. Run it with your own key to see real model output (see "Turning on the real model").
 
 ## What it does
 
