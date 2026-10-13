@@ -28,8 +28,12 @@ public class LlmClient implements Chat {
     private static final Logger log = LoggerFactory.getLogger(LlmClient.class);
 
     public static class LlmException extends Exception {
-        public LlmException(String m) { super(m); }
-        public LlmException(String m, Throwable t) { super(m, t); }
+        public LlmException(String m) { super(m); this.outage = true; }
+        public LlmException(String m, Throwable t) { super(m, t); this.outage = true; }
+        /** False for rejections of one request (bad request, rate limit): they say nothing about the provider being down. */
+        final boolean outage;
+        private LlmException(String m, boolean outage) { super(m); this.outage = outage; }
+        static LlmException rejected(String m) { return new LlmException(m, false); }
     }
 
     private final ObjectMapper mapper;
@@ -109,7 +113,7 @@ public class LlmClient implements Chat {
             return out;
         } catch (LlmException e) {
             lastError = e.getMessage() == null ? "" : e.getMessage();
-            if (consecutiveFailures.incrementAndGet() >= 3) {
+            if (e.outage && consecutiveFailures.incrementAndGet() >= 3) {
                 openUntil.set(System.currentTimeMillis() + 60_000);
                 consecutiveFailures.set(0);
                 log.warn("LLM circuit opened for 60s after 3 failures in a row, last: {}", e.getMessage());
@@ -123,11 +127,17 @@ public class LlmClient implements Chat {
     private String callWithRetry(String system, String user, boolean json) throws LlmException {
         LlmException last = null;
         boolean jsonMode = json;
+        String sys = system;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
-                return call(system, user, jsonMode);
+                return call(sys, user, jsonMode);
             } catch (RetryableException e) {
-                last = new LlmException(e.getMessage());
+                last = e.outage ? new LlmException(e.getMessage()) : LlmException.rejected(e.getMessage());
+                if (e.nudge && !sys.endsWith(NUDGE)) {
+                    sys = sys + NUDGE;
+                    log.warn("LLM tried native tool calling ({}), retrying once with a reminder", e.getMessage());
+                    continue;
+                }
                 if (e.dropJsonMode && jsonMode) {
                     // the provider rejected its own JSON mode on this output; our parsers accept plain text with a JSON object in it
                     jsonMode = false;
@@ -140,11 +150,53 @@ public class LlmClient implements Chat {
         throw last == null ? new LlmException("LLM call failed") : last;
     }
 
+    /** Some models (gpt-oss on Groq) answer with their native tool-call format even though no tools are declared; Groq rejects that with 400 tool_use_failed. */
+    static final String NUDGE = "\n\nImportant: do not use native function or tool calling. Reply with exactly one JSON object as text, using the action format above.";
+
     private static class RetryableException extends Exception {
         final long waitMs;
-        final boolean dropJsonMode;
-        RetryableException(String m, long waitMs) { this(m, waitMs, false); }
-        RetryableException(String m, long waitMs, boolean dropJsonMode) { super(m); this.waitMs = waitMs; this.dropJsonMode = dropJsonMode; }
+        final boolean dropJsonMode, nudge, outage;
+        RetryableException(String m, long waitMs, boolean outage) { this(m, waitMs, false, false, outage); }
+        RetryableException(String m, long waitMs, boolean dropJsonMode, boolean nudge, boolean outage) {
+            super(m); this.waitMs = waitMs; this.dropJsonMode = dropJsonMode; this.nudge = nudge; this.outage = outage;
+        }
+    }
+
+    /**
+     * Turns the model's rejected native tool call (Groq puts it in error.failed_generation) into our own
+     * {"action":"tool",...} message, so the agent loop carries on instead of falling back to the template. Null if unreadable.
+     */
+    String salvageToolCall(String failedGeneration) {
+        if (failedGeneration == null || failedGeneration.isBlank()) return null;
+        try {
+            String tool = null;
+            JsonNode args = null;
+            int a = failedGeneration.indexOf('{');
+            while (a >= 0 && tool == null) {
+                int b = failedGeneration.lastIndexOf('}');
+                for (int end = b; end > a && tool == null; end = failedGeneration.lastIndexOf('}', end - 1)) {
+                    try {
+                        JsonNode n = mapper.readTree(failedGeneration.substring(a, end + 1));
+                        JsonNode name = n.path("name"), ar = n.has("arguments") ? n.path("arguments") : n.has("parameters") ? n.path("parameters") : n.path("args");
+                        if (name.isTextual() && !ar.isMissingNode()) {
+                            tool = name.asText();
+                            args = ar.isTextual() ? mapper.readTree(ar.asText()) : ar;
+                        }
+                    } catch (Exception ignored) { /* try a shorter slice */ }
+                }
+                a = failedGeneration.indexOf('{', a + 1);
+            }
+            if (tool == null) {
+                var m = java.util.regex.Pattern.compile("functions\\.([A-Za-z_][A-Za-z0-9_]*)[^{]*(\\{.*\\})", java.util.regex.Pattern.DOTALL).matcher(failedGeneration);
+                if (m.find()) { tool = m.group(1); args = mapper.readTree(m.group(2)); }
+            }
+            if (tool == null || args == null || !args.isObject()) return null;
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("action", "tool"); out.put("tool", tool); out.put("args", args); out.put("why", "recovered from the provider's rejected tool call");
+            return mapper.writeValueAsString(out);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** "LLM HTTP 400: <provider error message>", clipped and with anything key-shaped removed. The request is never included. */
@@ -186,12 +238,19 @@ public class LlmClient implements Chat {
             HttpResponse<String> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
             int sc = resp.statusCode();
             if (sc == 429 || sc >= 500) {
-                throw new RetryableException(describeError(sc, resp.body()), retryAfterMs(resp.headers().firstValue("retry-after")));
+                throw new RetryableException(describeError(sc, resp.body()), retryAfterMs(resp.headers().firstValue("retry-after")), sc != 429);
+            }
+            if (sc == 400 && resp.body().contains("tool_use_failed")) {
+                String fg = null;
+                try { fg = mapper.readTree(resp.body()).path("error").path("failed_generation").asText(null); } catch (Exception ignored) { /* no detail */ }
+                String salvaged = salvageToolCall(fg);
+                if (salvaged != null) { log.info("LLM tool_use_failed: recovered the model's tool call"); return salvaged; }
+                throw new RetryableException(describeError(sc, resp.body()), 0, false, true, false);
             }
             if (sc == 400 && json && resp.body().contains("json_validate_failed")) {
-                throw new RetryableException(describeError(sc, resp.body()), 0, true);
+                throw new RetryableException(describeError(sc, resp.body()), 0, true, false, false);
             }
-            if (sc >= 400) throw new LlmException(describeError(sc, resp.body()));
+            if (sc >= 400) throw LlmException.rejected(describeError(sc, resp.body()));
             JsonNode root = mapper.readTree(resp.body());
             JsonNode content = root.path("choices").path(0).path("message").path("content");
             if (content.isMissingNode() || content.asText().isBlank()) throw new LlmException("empty LLM response");

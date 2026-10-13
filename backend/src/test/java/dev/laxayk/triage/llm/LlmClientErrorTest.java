@@ -85,4 +85,54 @@ class LlmClientErrorTest {
         c.chat("s", "u", false);
         assertEquals("", c.lastError());
     }
+
+    private static String toolFailed(String failedGeneration) {
+        String fg = failedGeneration.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+        return "{\"error\":{\"message\":\"Tool choice is none, but model called a tool\",\"type\":\"invalid_request_error\",\"code\":\"tool_use_failed\",\"failed_generation\":\"" + fg + "\"}}";
+    }
+
+    @Test void rejectedNativeToolCallIsTurnedIntoOurActionMessage() throws Exception {
+        LlmClient c = start(n -> new String[]{"400", toolFailed("{\"name\": \"search_knowledge\", \"arguments\": {\"query\": \"manual sync\", \"scope\": \"docs\"}}")});
+        var n = new ObjectMapper().readTree(c.chat("sys", "u", true));
+        assertEquals("tool", n.path("action").asText());
+        assertEquals("search_knowledge", n.path("tool").asText());
+        assertEquals("manual sync", n.path("args").path("query").asText());
+        assertEquals(1, bodies.size());
+    }
+
+    @Test void argumentsGivenAsAStringAndWrappedInTagsAreRecovered() throws Exception {
+        LlmClient c = start(n -> new String[]{"400", toolFailed("<tool_call>\n{\"name\":\"lookup_customer\",\"arguments\":\"{}\"}\n</tool_call>")});
+        var j = new ObjectMapper().readTree(c.chat("sys", "u", true));
+        assertEquals("lookup_customer", j.path("tool").asText());
+        assertTrue(j.path("args").isObject());
+    }
+
+    @Test void harmonyStyleFunctionCallIsRecovered() throws Exception {
+        LlmClient c = start(n -> new String[]{"400", toolFailed("<|channel|>commentary to=functions.search_knowledge <|constrain|>json<|message|>{\"query\":\"api trigger\"}")});
+        var j = new ObjectMapper().readTree(c.chat("sys", "u", true));
+        assertEquals("search_knowledge", j.path("tool").asText());
+        assertEquals("api trigger", j.path("args").path("query").asText());
+    }
+
+    @Test void unreadableToolCallRetriesOnceWithAReminderNotNativeTools() throws Exception {
+        LlmClient c = start(n -> n == 1 ? new String[]{"400", toolFailed("???")} : new String[]{"200", OK});
+        assertEquals("{\"a\":1}", c.chat("sys", "u", true));
+        assertEquals(2, bodies.size());
+        assertFalse(bodies.get(0).contains("do not use native function"));
+        assertTrue(bodies.get(1).contains("do not use native function"));
+    }
+
+    @Test void rateLimitsAndBadRequestsNeverOpenTheBreakerButOutagesDo() throws Exception {
+        LlmClient limited = start(n -> new String[]{"429", "{\"error\":{\"message\":\"TPM\",\"code\":\"rate_limit_exceeded\"}}", "0"});
+        for (int i = 0; i < 4; i++) assertThrows(LlmClient.LlmException.class, () -> limited.chat("s", "u", false));
+        assertFalse(limited.circuitOpen());
+        server.stop(0); bodies.clear();
+        LlmClient bad = start(n -> new String[]{"400", "{\"error\":{\"message\":\"x\",\"code\":\"y\"}}"});
+        for (int i = 0; i < 4; i++) assertThrows(LlmClient.LlmException.class, () -> bad.chat("s", "u", false));
+        assertFalse(bad.circuitOpen());
+        server.stop(0); bodies.clear();
+        LlmClient down = start(n -> new String[]{"503", "{\"error\":{\"message\":\"down\"}}", "0"});
+        for (int i = 0; i < 3; i++) assertThrows(LlmClient.LlmException.class, () -> down.chat("s", "u", false));
+        assertTrue(down.circuitOpen());
+    }
 }
