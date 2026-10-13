@@ -214,7 +214,8 @@ public class Pipeline {
 
     private void createOrSkip(EmailRow row, ParsedEmail e, Classification c) {
         if (!c.category().ticketable()) {
-            store.markEmailProcessed(row.id(), "PROCESSED", "CLEAN", c.reason(), c.category().name(), "NO_TICKET", null);
+            String why = c.category() == Category.IRRELEVANT ? "Possibly unrelated, kept for review (not deleted): " + c.reason() : c.reason();
+            store.markEmailProcessed(row.id(), "PROCESSED", "CLEAN", why, c.category().name(), "NO_TICKET", null);
             hub.publish("email", Map.of("id", row.id(), "state", "no_ticket"));
             return;
         }
@@ -242,6 +243,9 @@ public class Pipeline {
                 long draftId = store.insertDraft(tid, d.body(), String.join("; ", d.evidence()), d.generatedBy());
                 int n = 1;
                 for (DraftAgent.Step s : d.steps()) store.insertDraftStep(draftId, n++, s.kind(), s.tool(), s.args(), s.result(), s.latencyMs());
+                if (d.needsHuman()) store.flagReview(tid);
+                if (!d.warnings().isEmpty()) store.event(row.correlationId(), row.id(), "DRAFT_CHECK", String.join("; ", d.warnings()), 0);
+                if (d.gap()) store.event(row.correlationId(), row.id(), "KB_GAP", "no document answered: " + Notifier.sanitize(row.subject()), 0);
                 store.event(row.correlationId(), row.id(), "DRAFT", "by " + d.generatedBy() + ", " + d.steps().size() + " steps, evidence " + d.evidence()
                         + (d.needsHuman() ? ", needs human" : ""), ms(t2));
             } catch (RuntimeException ex) {

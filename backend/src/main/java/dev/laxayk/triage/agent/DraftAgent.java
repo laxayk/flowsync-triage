@@ -27,7 +27,42 @@ public class DraftAgent {
     static final int MAX_TOOL_CALLS = 4;
 
     public record Step(String kind, String tool, String args, String result, long latencyMs) {}
-    public record Result(String body, List<String> evidence, String generatedBy, List<Step> steps, boolean needsHuman) {}
+    /** warnings: why a person should read this draft closely (unsupported claims, no document answered). gap: the question no document answered. */
+    public record Result(String body, List<String> evidence, String generatedBy, List<Step> steps, boolean needsHuman, List<String> warnings, boolean gap) {
+        public Result(String body, List<String> evidence, String generatedBy, List<Step> steps, boolean needsHuman) {
+            this(body, evidence, generatedBy, steps, needsHuman, List.of(), false);
+        }
+    }
+
+    static final java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("\\b\\d[\\d,.]*\\d\\b|\\b\\d\\b");
+    static final List<String> CLAIM_TERMS = List.of("real-time", "real time", "instantly", "soc 2", "soc2", "iso 27001", "hipaa", "gdpr", "pci",
+            "guarantee", "uptime", "discount", "free trial", "salesforce", "hubspot", "postgres", "google sheets", "excel", "mysql", "snowflake",
+            "bigquery", "oracle", "mongodb", "zapier", "slack", "okta", "azure", "webhook", "api", "sso", "saml", "dry run", "dry-run");
+
+    /**
+     * Cheap, limited check of a drafted reply against what the tools returned. It flags numbers that appear nowhere in the tool results
+     * or the customer's email, and product or compliance terms in the reply that no tool result mentions. It cannot prove a reply is
+     * grounded: a wrong claim built from words that do appear in the results passes. Anything flagged goes to a person.
+     */
+    static List<String> unsupportedClaims(String reply, String toolText, String emailText) {
+        String r = reply.toLowerCase(Locale.ROOT), tools = toolText.toLowerCase(Locale.ROOT), both = tools + "\n" + emailText.toLowerCase(Locale.ROOT);
+        List<String> out = new ArrayList<>();
+        var m = NUMBER.matcher(r);
+        while (m.find()) {
+            String n = m.group().replaceAll("[,.]$", "");
+            if (!both.contains(n) && !out.contains("number " + n)) out.add("number " + n);
+        }
+        for (String t : CLAIM_TERMS) {
+            boolean inReply = t.length() <= 4 ? java.util.regex.Pattern.compile("\\b" + java.util.regex.Pattern.quote(t) + "\\b").matcher(r).find() : r.contains(t);
+            if (inReply && !tools.contains(t)) out.add("\"" + t + "\"");
+        }
+        return out;
+    }
+
+    static String handoff(ParsedEmail e) {
+        String name = e.fromName() == null || e.fromName().isBlank() ? "there" : e.fromName().split("\\s+")[0];
+        return "Hi " + name + ",\n\nThanks for reaching out. We are looking into this and a teammate will follow up shortly.\n\nFlowSync Support";
+    }
 
     static final String SYSTEM = """
             You are a support agent for FlowSync, a B2B SaaS that syncs records between tools such as Salesforce, HubSpot, databases and sheets.
@@ -73,6 +108,11 @@ public class DraftAgent {
                 return loop(e, ctx);
             } catch (LlmClient.LlmException | RuntimeException ex) {
                 log.warn("Agent loop failed, using scripted fallback: {}", ex.getMessage());
+                Result r = scripted(e, category, ctx);
+                String why = clip(String.valueOf(ex.getMessage()), 100);
+                List<Step> st = new ArrayList<>(r.steps());
+                st.add(0, new Step("check", "model_unavailable", null, why, 0));
+                return new Result(r.body(), r.evidence(), "scripted (model failed: " + why + ")", st, r.needsHuman(), r.warnings(), r.gap());
             }
         }
         return scripted(e, category, ctx);
@@ -83,6 +123,7 @@ public class DraftAgent {
         List<Step> steps = new ArrayList<>();
         StringBuilder observations = new StringBuilder();
         int toolCalls = 0, invalid = 0;
+        boolean docHit = false;
         String emailBlock = promptEmail(e);
         for (int turn = 0; turn < MAX_TOOL_CALLS + 3; turn++) {
             String user = emailBlock + (observations.length() == 0 ? "" : "\n\nTool results so far:\n" + observations)
@@ -96,7 +137,7 @@ public class DraftAgent {
             if (n == null && llm.nativeTools() && toolCalls > 0 && !raw.isBlank() && !raw.contains("{")) {
                 // the model answered in plain text after looking things up: keep it, but a person must read it closely
                 steps.add(new Step("final", null, null, "plain-text reply, needs human check", ms));
-                return new Result(raw.trim(), List.of(), "agent:" + llm.model(), steps, true);
+                return new Result(raw.trim(), List.of(), "agent:" + llm.model(), steps, true, List.of("plain-text reply, not checked"), false);
             }
             if (n == null) {
                 if (++invalid > 1) throw new LlmClient.LlmException("model returned invalid JSON twice");
@@ -109,8 +150,20 @@ public class DraftAgent {
                 List<String> sources = new ArrayList<>();
                 n.path("sources").forEach(s -> { if (sources.size() < 5) sources.add(clip(s.asText(), 80)); });
                 boolean human = n.path("needs_human").asBoolean(false);
+                List<String> warnings = new ArrayList<>();
+                if (!docHit) {
+                    // No document answered: do not let the model improvise. A short handoff goes out for a person to review.
+                    steps.add(new Step("check", "relevance_bar", null, "no document cleared the relevance bar; handoff reply used", 0));
+                    return new Result(handoff(e), List.of(), "agent:" + llm.model(), steps, true, List.of("no document answered this question"), true);
+                }
+                List<String> bad = unsupportedClaims(reply, observations.toString(), e.subject() + " " + e.body());
+                if (!bad.isEmpty()) {
+                    human = true;
+                    warnings.add("not found in the retrieved documents: " + String.join(", ", bad));
+                    steps.add(new Step("check", "grounding_check", null, "unsupported: " + String.join(", ", bad), 0));
+                }
                 steps.add(new Step("final", null, null, human ? "needs human follow-up" : "reply written", ms));
-                return new Result(reply, sources, "agent:" + llm.model(), steps, human);
+                return new Result(reply, sources, "agent:" + llm.model(), steps, human, warnings, false);
             }
             if (action.equals("tool") && toolCalls < MAX_TOOL_CALLS) {
                 String tool = n.path("tool").asText("");
@@ -119,6 +172,7 @@ public class DraftAgent {
                 String out = tools.run(tool, args, ctx);
                 long toolMs = (System.nanoTime() - t1) / 1_000_000;
                 toolCalls++;
+                if (tool.equals("search_knowledge") && !out.startsWith("No matching") && !out.startsWith("ERROR")) docHit = true;
                 steps.add(new Step("tool", tool, clip(args.toString(), 300), clip(out, 700), ms + toolMs));
                 observations.append("[").append(toolCalls).append("] ").append(tool).append(args.toString()).append(" ->\n").append(out).append("\n");
                 continue;
@@ -179,7 +233,8 @@ public class DraftAgent {
         if (customer.contains("Enterprise")) sb.append("As an Enterprise customer your success manager has been looped in.\n\n");
         sb.append(haveDocs ? "Tell us if that does not solve it and we will dig in." : "").append("\n\nFlowSync Support");
         steps.add(new Step("final", null, null, "scripted reply (no LLM)", 0));
-        return new Result(sb.toString().replaceAll("\n{3,}", "\n\n"), evidence, "scripted", steps, !haveDocs);
+        return new Result(sb.toString().replaceAll("\n{3,}", "\n\n"), evidence, "scripted", steps, !haveDocs,
+                haveDocs ? List.of() : List.of("no document answered this question"), !haveDocs);
     }
 
     private String run(List<Step> steps, String tool, String argsJson, AgentTools.Context ctx) {

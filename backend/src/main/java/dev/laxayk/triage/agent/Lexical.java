@@ -12,7 +12,7 @@ final class Lexical {
             "also", "just", "like", "tell", "us", "should", "than", "then", "them", "they", "its", "into", "out", "up", "so", "but", "all",
             "flowsync", "dear", "question", "quick", "using", "use", "much", "many", "more", "some", "been", "am", "im", "ive");
     private static final Pattern WORD = Pattern.compile("[a-z0-9]+");
-    private static final double K1 = 1.2, B = 0.75;
+    private static final double K1 = 1.2, B = 0.75, UNKNOWN_WEIGHT = 0.6;
 
     private final Map<KnowledgeBase.Chunk, List<String>> docs = new HashMap<>();
     private final Map<String, Integer> df = new HashMap<>();
@@ -63,7 +63,8 @@ final class Lexical {
         double bm = 0, matched = 0, all = 0;
         for (String w : new LinkedHashSet<>(tokens(query))) {
             double idf = idf(w);
-            all += idf;
+            // a word no document uses (a typo, a filler, or a topic the docs do not cover) only weakly counts against the chunk
+            all += df.containsKey(w) ? idf : idf * UNKNOWN_WEIGHT;
             int f = tf.getOrDefault(w, 0);
             if (f == 0) continue;
             matched += idf;

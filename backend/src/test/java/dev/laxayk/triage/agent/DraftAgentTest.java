@@ -77,7 +77,7 @@ class DraftAgentTest {
     @Test void garbageFromModelFallsBackToScriptedRun() {
         var chat = new FakeChat("sorry I cannot", "still not json");
         var r = new DraftAgent(chat, tools, mapper).write(mail("dana@northwind-retail.example", "Sync failed after timeout", "Can I replay only the failed rows?"), Category.QUERY, 1);
-        assertEquals("scripted", r.generatedBy());
+        assertTrue(r.generatedBy().startsWith("scripted (model failed:"), r.generatedBy());
         assertTrue(r.body().contains("Hi Dana"));
         assertTrue(r.evidence().stream().anyMatch(s -> s.toLowerCase().contains("replay")));
     }
@@ -86,7 +86,7 @@ class DraftAgentTest {
         String tool = "{\"action\":\"tool\",\"tool\":\"ticket_history\",\"args\":{}}";
         var chat = new FakeChat(tool, tool, tool, tool, tool, tool, tool, tool);
         var r = new DraftAgent(chat, tools, mapper).write(mail("a@b.example", "Hi", "Hello"), Category.QUERY, 1);
-        assertEquals("scripted", r.generatedBy(), "an agent that never finishes is replaced by the scripted run");
+        assertTrue(r.generatedBy().startsWith("scripted"), r.generatedBy());
         assertTrue(chat.prompts.size() <= DraftAgent.MAX_TOOL_CALLS + 3);
     }
 }

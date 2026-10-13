@@ -37,6 +37,10 @@ public class Store {
                         rs.getString("password_hash"), rs.getString("role"))).optional();
     }
 
+    public void flagReview(long ticketId) {
+        db.sql("UPDATE tickets SET needs_review=TRUE WHERE id=?").param(ticketId).update();
+    }
+
     public void insertUser(String username, String hash, String role) {
         db.sql("INSERT INTO users(username, password_hash, role) VALUES (?,?,?)")
                 .params(username, hash, role).update();
