@@ -187,6 +187,12 @@ public class ApiController {
         return Map.of("sent", true, "mode", mode, "recipient", t.requester());
     }
 
+    @PostMapping("/tickets/{id}/regenerate")
+    public Map<String, Object> regenerate(@PathVariable long id, HttpServletRequest r) {
+        if (!pipeline.regenerate(id, who(r).username())) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        return Map.of("ok", true);
+    }
+
     @PostMapping("/drafts/{id}/reject")
     public Map<String, Object> reject(@PathVariable long id, HttpServletRequest r) {
         requireApprover(r);

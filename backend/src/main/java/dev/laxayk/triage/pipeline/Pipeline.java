@@ -237,9 +237,18 @@ public class Pipeline {
                 + Notifier.sanitize(subject) + (assignee == null ? "" : " -> " + assignee));
 
         if (EnumSet.of(Category.QUERY, Category.BILLING, Category.ACCOUNT_ACCESS).contains(c.category())) {
+            writeDraft(row, e, c.category(), tid, t);
+        }
+        long t3 = System.nanoTime();
+        Optional<String> alerted = ownerAlert.alert(t, e, c.category());
+        alerted.ifPresent(to -> store.event(row.correlationId(), row.id(), "OWNER_MAIL", "briefed " + to, ms(t3)));
+        return Optional.of(tid);
+    }
+
+    private void writeDraft(EmailRow row, ParsedEmail e, Category category, long tid, TicketRow t) {
             long t2 = System.nanoTime();
             try {
-                DraftAgent.Result d = drafts.write(e, c.category(), tid);
+                DraftAgent.Result d = drafts.write(e, category, tid);
                 long draftId = store.insertDraft(tid, d.body(), String.join("; ", d.evidence()), d.generatedBy());
                 int n = 1;
                 for (DraftAgent.Step s : d.steps()) store.insertDraftStep(draftId, n++, s.kind(), s.tool(), s.args(), s.result(), s.latencyMs());
@@ -252,11 +261,20 @@ public class Pipeline {
                 log.warn("Draft agent failed for {}: {}", t.key(), ex.getMessage());
                 store.event(row.correlationId(), row.id(), "DRAFT", "failed: " + ex.getClass().getSimpleName(), ms(t2));
             }
-        }
-        long t3 = System.nanoTime();
-        Optional<String> alerted = ownerAlert.alert(t, e, c.category());
-        alerted.ifPresent(to -> store.event(row.correlationId(), row.id(), "OWNER_MAIL", "briefed " + to, ms(t3)));
-        return Optional.of(tid);
+    }
+
+    /** Human asked for a fresh draft: the open drafts of the ticket are rejected as superseded and the agent runs again on the first mail. */
+    public boolean regenerate(long ticketId, String actor) {
+        TicketRow t = store.ticket(ticketId).orElse(null);
+        List<EmailRow> mails = store.emailsForTicket(ticketId);
+        if (t == null || mails.isEmpty()) return false;
+        EmailRow first = mails.get(0);
+        for (var d : store.draftsForTicket(ticketId))
+            if ("DRAFT".equals(d.status())) store.decideDraft(d.id(), "REJECTED", actor, "superseded by regenerate");
+        store.audit(actor, "REGENERATE_DRAFT", ticketId, first.id(), "new draft requested");
+        writeDraft(first, toParsed(first), Category.valueOf(t.category()), ticketId, t);
+        hub.publish("ticket", Map.of("id", ticketId, "state", "updated"));
+        return true;
     }
 
     private static long ms(long startNanos) { return (System.nanoTime() - startNanos) / 1_000_000; }

@@ -44,6 +44,25 @@ public class LlmClient implements Chat {
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
     private final AtomicLong openUntil = new AtomicLong();
     private volatile String lastError = "";
+    /** Spacing between calls so bursts stay under a provider's tokens-per-minute limit. -1 = default (2.5 s for Groq's free tier, none otherwise). */
+    @Value("${app.llm.min-interval-ms:-1}") private int minIntervalMs = 0;
+    private long nextSlot;
+
+    void setMinIntervalMs(int ms) { this.minIntervalMs = ms; }
+
+    void pace() throws InterruptedException {
+        int gap = minIntervalMs >= 0 ? minIntervalMs : provider.equals("groq") ? 2500 : 0;
+        if (gap == 0) return;
+        long wait;
+        synchronized (this) {
+            long now = System.currentTimeMillis();
+            long slot = Math.max(now, nextSlot);
+            nextSlot = slot + gap;
+            wait = slot - now;
+        }
+        if (wait > 0) Thread.sleep(wait);
+    }
+
 
     public LlmClient(ObjectMapper mapper,
                      @Value("${app.llm.provider:none}") String provider,
@@ -270,6 +289,7 @@ public class LlmClient implements Chat {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)));
             if (!apiKey.isBlank()) rb.header("Authorization", "Bearer " + apiKey);
+            pace();
             HttpResponse<String> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
             int sc = resp.statusCode();
             if (sc == 429 || sc >= 500) {

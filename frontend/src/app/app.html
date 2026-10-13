@@ -113,7 +113,7 @@
                   <summary>Agent trace ({{ d.draftSteps[dr.id].length }} steps)</summary>
                   @for (st of d.draftSteps[dr.id]; track st.id) {
                     <div class="step">
-                      <span class="chan">{{ st.kind === 'tool' ? st.tool : 'final' }}</span>
+                      <span class="chan">{{ st.kind === 'final' ? 'final' : st.tool }}</span>
                       @if (st.args && st.args !== '{}') { <code>{{ st.args }}</code> }
                       <div class="muted small">{{ st.result }} <i>{{ st.latencyMs }} ms</i></div>
                     </div>
@@ -130,6 +130,11 @@
                 </div>
               } @else { <div class="muted small">{{ dr.status }} by {{ dr.approvedBy }}</div> }
             </div>
+          }
+
+          @if (d.ticket.category === 'QUERY' || d.ticket.category === 'BILLING' || d.ticket.category === 'ACCOUNT_ACCESS') {
+            <div class="actions"><button class="ghost" (click)="regenerate(d.ticket.id)">Regenerate draft</button>
+              <span class="muted small">Rejects the open draft and asks the agent again.</span></div>
           }
 
           <h3>Conversation</h3>

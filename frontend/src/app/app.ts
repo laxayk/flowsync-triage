@@ -128,6 +128,7 @@ export class App implements OnDestroy {
     await this.refreshAll();
   }
 
+  async regenerate(ticketId: number) { await this.api.regenerate(ticketId); await this.refreshAll(); }
   async reject(id: number) { await this.api.reject(id); await this.refreshAll(); }
 
   async release(e: EmailRow) {

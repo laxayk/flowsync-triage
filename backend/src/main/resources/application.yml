@@ -35,6 +35,7 @@ app:
     model: ${LLM_MODEL:}
     timeout-seconds: 25
     max-concurrency: 3
+    min-interval-ms: ${LLM_MIN_INTERVAL_MS:-1}
   imap:
     enabled: ${IMAP_ENABLED:false}
     host: ${IMAP_HOST:imap.gmail.com}

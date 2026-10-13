@@ -37,6 +37,7 @@ export class Api {
   dismiss(id: number) { return firstValueFrom(this.http.post(`/api/emails/${id}/dismiss`, {}, this.opts())); }
   editDraft(id: number, body: string) { return firstValueFrom(this.http.put(`/api/drafts/${id}`, { body }, this.opts())); }
   approve(id: number) { return firstValueFrom(this.http.post<{ mode: string; recipient: string }>(`/api/drafts/${id}/approve`, {}, this.opts())); }
+  regenerate(ticketId: number) { return firstValueFrom(this.http.post(`/api/tickets/${ticketId}/regenerate`, {}, this.opts())); }
   reject(id: number) { return firstValueFrom(this.http.post(`/api/drafts/${id}/reject`, {}, this.opts())); }
   loadSamples() { return firstValueFrom(this.http.post<{ ingested: number }>('/api/ingest/samples', {}, this.opts())); }
   stats() { return firstValueFrom(this.http.get<Stats>('/api/stats', this.opts())); }
