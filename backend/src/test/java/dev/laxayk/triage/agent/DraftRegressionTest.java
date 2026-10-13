@@ -40,7 +40,8 @@ class DraftRegressionTest {
                 String user = req.path("messages").get(1).path("content").asText("");
                 String out;
                 if (!req.has("tools")) {
-                    out = "{\"choices\":[{\"message\":{\"content\":\"{\\\"category\\\":\\\"QUERY\\\",\\\"priority\\\":\\\"P3\\\",\\\"summary\\\":\\\"question\\\",\\\"confidence\\\":0.9}\"}}]}";
+                    String cat = user.contains("SCENARIO-IRRELEVANT") ? "IRRELEVANT" : "QUERY";
+                    out = "{\"choices\":[{\"message\":{\"content\":\"{\\\"category\\\":\\\"" + cat + "\\\",\\\"priority\\\":\\\"P3\\\",\\\"summary\\\":\\\"question\\\",\\\"confidence\\\":0.9}\"}}]}";
                 } else if (!user.contains("Tool results so far")) {
                     String subject = user.lines().filter(l -> l.startsWith("Subject: ")).findFirst().orElse("Subject: ").substring(9);
                     out = call("search_knowledge", "{\"query\":\"" + subject + "\",\"scope\":\"docs\"}");
@@ -133,5 +134,19 @@ class DraftRegressionTest {
         assertEquals(2, drafts.size());
         assertEquals(1, drafts.stream().filter(x -> x.status().equals("DRAFT")).count());
         assertEquals(2, events(t).stream().filter(e -> e.startsWith("DRAFT_CHECK")).count(), "the claim check ran again on the new draft");
+    }
+
+    @Test void unrelatedMailCreatesNoTicketNoDraftAndWaitsInReviewWithAVisibleReason() {
+        pipeline.ingest(new ParsedEmail("<un@t>", null, null, "reservations@seaside-hotel.example", "Hotel Desk", "support@flowsync.example",
+                "Your booking confirmation", "Your room is confirmed for 3 nights. SCENARIO-IRRELEVANT", Instant.now(), false, List.of()), "test");
+        assertTrue(pipeline.await(15000));
+        var e = store.recentEmails(100).stream().filter(x -> x.messageId().equals("<un@t>")).findFirst().orElseThrow();
+        assertEquals("NO_TICKET", e.disposition());
+        assertEquals("IRRELEVANT", e.category());
+        assertNull(e.ticketId(), "no support ticket");
+        assertTrue(e.verdictReason().startsWith("Possibly unrelated"), e.verdictReason());
+        assertTrue(store.emailsByDisposition("NO_TICKET").stream().anyMatch(x -> x.id() == e.id()), "listed for review");
+        // a person can still release it into a ticket
+        assertTrue(pipeline.release(e.id(), "tester").isPresent());
     }
 }
