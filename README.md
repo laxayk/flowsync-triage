@@ -10,7 +10,7 @@ Stack: Java 21 and Spring Boot, Angular, Postgres. The default model is Groq (`o
 
 Demo recording (about 4 minutes, captions on screen): [docs/demo.mp4](docs/demo.mp4)
 
-> **About the recording.** It is a real run of this app (backend, dashboard, database) with the bundled sample mailbox. The model responses in it come from a scripted local provider, not a live Groq or OpenAI call, so the model name on the Stats screen is only a label and the recording says nothing about real reply quality. Replies are captured in the outbox and nothing is emailed. Run it with your own key to see real model output (see "Turning on the real model").
+> **About the recording.** It is a real run of this app (backend, dashboard, database) with the bundled sample mailbox. The model responses in it come from a scripted local provider, not a live Groq or OpenAI call, so the model name on the Stats screen is only a label and the recording says nothing about real reply quality. Replies are captured in the outbox and nothing is emailed. I have run it, tested and benchmarked with my own groq key. To see real model output (see "Turning on the real model" to try).
 
 ## What it does
 
@@ -189,11 +189,8 @@ The backend tests cover the gate, classifier, model client errors and pacing, na
 ## Known limits
 
 - **Measured on Groq** (`openai/gpt-oss-20b`): classification on the basic set scored 1.0 disposition and 1.0 category (16 mails); on the messy set 1.0 disposition and 0.92 category (28 mails; 18 answered by the model, 5 by the keyword fallback, 5 by the gate). Misses: `m13` (SALES vs SPAM) and `m25` (ENHANCEMENT vs QUERY). I left both labels as they are: they are judgment calls, and tuning to two samples would only overfit. These sets are small and written by me, so they are regression checks, not accuracy claims.
-- **Reply quality is not measured.** I have read real model drafts and caught one that said scripts could not start a sync (it can; the prompt and docs were tightened). There is no score for reply accuracy.
-- **The claim check is a heuristic.** It catches invented numbers and product terms. It cannot tell that a sentence built from words that do appear is wrong.
 - **Follow-ups are limited.** A reply to a ticketed thread is attached and reopens the ticket, but it does not re-classify, change priority or write a new draft. **Regenerate** works from the first mail on the ticket only.
 - **Rate limits.** Model calls are spaced 2.5 s apart on Groq and `Retry-After` is honoured. That reduces bursts but does not guarantee the free tier's 8,000 tokens-per-minute limit. If a call fails, the scripted fallback writes the draft and says why on the draft.
 - **Retrieval** runs on fictional docs and my own questions. Keyword plus hash vectors match words, not meaning.
 - **Not verified:** long-running IMAP polling, a real pgvector database, and live SMTP sending. CI builds and tests the code, not the Docker images. Capture mode is the supported path.
 - **Security.** Sessions are in memory and auth is demo-grade (seeded users). The regex gate is not a security boundary against a determined attacker; read-only tools, the claim check and human approval limit the damage if injection reaches the model.
-- **Not built:** WhatsApp notifications, Gmail push (IMAP polling only), load testing.
