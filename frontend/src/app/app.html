@@ -196,6 +196,7 @@
             <div class="card"><h4>LLM</h4>
               <div>{{ s.llm.enabled ? s.llm.provider + ' / ' + s.llm.model : 'off (keyword fallback)' }}</div>
               @if (s.llm.circuitOpen) { <div class="err">circuit open, using fallback</div> }
+              @if (s.llm.lastError) { <div class="muted small">last LLM error: {{ s.llm.lastError }}</div> }
               <div class="muted small">Replies and owner briefings: {{ s.sendMode }} mode</div>
               <div class="muted small">Knowledge base: {{ s.knowledgeBase.chunks }} chunks, {{ s.knowledgeBase.embedder }}</div></div>
             <div class="card"><h4>Mail by outcome</h4>

@@ -76,4 +76,13 @@ class LlmClientErrorTest {
         assertEquals(1500, LlmClient.retryAfterMs(Optional.empty()));
         assertEquals(1500, LlmClient.retryAfterMs(Optional.of("soon")));
     }
+
+    @Test void lastErrorIsKeptThenClearedOnSuccess() throws Exception {
+        LlmClient c = start(n -> n == 1 ? new String[]{"400", "{\"error\":{\"message\":\"bad thing\",\"code\":\"x\"}}"} : new String[]{"200", OK});
+        assertEquals("", c.lastError());
+        assertThrows(LlmClient.LlmException.class, () -> c.chat("s", "u", false));
+        assertTrue(c.lastError().contains("bad thing"));
+        c.chat("s", "u", false);
+        assertEquals("", c.lastError());
+    }
 }

@@ -24,7 +24,7 @@ export interface Stats {
   emailsByDisposition: Record<string, number>; emailsByVerdict: Record<string, number>;
   avgLatencyMsByStage: Record<string, number>;
   latencyPercentilesMs: Record<string, { p50: number; p95: number; n: number }>;
-  llm: { enabled: boolean; provider: string; model: string; circuitOpen: boolean };
+  llm: { enabled: boolean; provider: string; model: string; circuitOpen: boolean; lastError?: string };
   sendMode: string;
   knowledgeBase: { chunks: number; embedder: string };
 }

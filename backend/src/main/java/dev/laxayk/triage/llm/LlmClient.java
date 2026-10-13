@@ -39,6 +39,7 @@ public class LlmClient implements Chat {
     private final Semaphore concurrency;
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
     private final AtomicLong openUntil = new AtomicLong();
+    private volatile String lastError = "";
 
     public LlmClient(ObjectMapper mapper,
                      @Value("${app.llm.provider:none}") String provider,
@@ -80,6 +81,9 @@ public class LlmClient implements Chat {
         return provider.equals("ollama") || !apiKey.isBlank();
     }
 
+    /** Most recent failure reason (already redacted) or empty; shown on the Stats tab so a fallback is never a mystery. */
+    public String lastError() { return lastError; }
+
     public boolean circuitOpen() { return System.currentTimeMillis() < openUntil.get(); }
 
     public String provider() { return provider; }
@@ -101,12 +105,14 @@ public class LlmClient implements Chat {
         try {
             String out = callWithRetry(system, user, json);
             consecutiveFailures.set(0);
+            lastError = "";
             return out;
         } catch (LlmException e) {
+            lastError = e.getMessage() == null ? "" : e.getMessage();
             if (consecutiveFailures.incrementAndGet() >= 3) {
                 openUntil.set(System.currentTimeMillis() + 60_000);
                 consecutiveFailures.set(0);
-                log.warn("LLM circuit opened for 60s after repeated failures: {}", e.getMessage());
+                log.warn("LLM circuit opened for 60s after 3 failures in a row, last: {}", e.getMessage());
             }
             throw e;
         } finally {

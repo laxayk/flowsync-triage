@@ -225,7 +225,7 @@ public class ApiController {
             if (!l.isEmpty()) p.put(stage, Map.of("p50", l.get(l.size() / 2), "p95", l.get(Math.min(l.size() - 1, (int) Math.floor(l.size() * 0.95))), "n", l.size()));
         }
         out.put("latencyPercentilesMs", p);
-        out.put("llm", Map.of("enabled", llm.enabled(), "provider", llm.provider(), "model", llm.model(), "circuitOpen", llm.circuitOpen()));
+        out.put("llm", Map.of("enabled", llm.enabled(), "provider", llm.provider(), "model", llm.model(), "circuitOpen", llm.circuitOpen(), "lastError", llm.lastError()));
         out.put("sendMode", outbox.mode());
         out.put("knowledgeBase", Map.of("chunks", kb.size(), "embedder", String.valueOf(kb.embedderId())));
         return out;
