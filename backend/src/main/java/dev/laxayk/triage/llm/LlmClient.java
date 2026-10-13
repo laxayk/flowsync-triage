@@ -116,11 +116,18 @@ public class LlmClient implements Chat {
 
     private String callWithRetry(String system, String user, boolean json) throws LlmException {
         LlmException last = null;
+        boolean jsonMode = json;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
-                return call(system, user, json);
+                return call(system, user, jsonMode);
             } catch (RetryableException e) {
                 last = new LlmException(e.getMessage());
+                if (e.dropJsonMode && jsonMode) {
+                    // the provider rejected its own JSON mode on this output; our parsers accept plain text with a JSON object in it
+                    jsonMode = false;
+                    log.warn("LLM rejected json mode ({}), retrying once without it", e.getMessage());
+                    continue;
+                }
                 try { Thread.sleep(e.waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
             }
         }
@@ -129,7 +136,32 @@ public class LlmClient implements Chat {
 
     private static class RetryableException extends Exception {
         final long waitMs;
-        RetryableException(String m, long waitMs) { super(m); this.waitMs = waitMs; }
+        final boolean dropJsonMode;
+        RetryableException(String m, long waitMs) { this(m, waitMs, false); }
+        RetryableException(String m, long waitMs, boolean dropJsonMode) { super(m); this.waitMs = waitMs; this.dropJsonMode = dropJsonMode; }
+    }
+
+    /** "LLM HTTP 400: <provider error message>", clipped and with anything key-shaped removed. The request is never included. */
+    String describeError(int status, String body) {
+        String msg = "";
+        try {
+            JsonNode err = mapper.readTree(body).path("error");
+            msg = err.isTextual() ? err.asText() : err.path("code").asText("") + " " + err.path("message").asText("");
+        } catch (Exception ignored) {
+            // non-JSON error body: fall through with no detail
+        }
+        msg = msg.trim();
+        if (!apiKey.isBlank()) msg = msg.replace(apiKey, "[redacted]");
+        msg = msg.replaceAll("(gsk_|sk-)[A-Za-z0-9_\\-]{8,}", "[redacted]").replaceAll("\\s+", " ");
+        if (msg.length() > 240) msg = msg.substring(0, 240) + "...";
+        return "LLM HTTP " + status + (msg.isEmpty() ? "" : ": " + msg);
+    }
+
+    static long retryAfterMs(java.util.Optional<String> header) {
+        return header.map(v -> {
+            try { return Math.max(500L, Math.min(20_000L, (long) (Double.parseDouble(v.trim()) * 1000))); }
+            catch (NumberFormatException e) { return 1500L; }
+        }).orElse(1500L);
     }
 
     private String call(String system, String user, boolean json) throws LlmException, RetryableException {
@@ -148,12 +180,12 @@ public class LlmClient implements Chat {
             HttpResponse<String> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
             int sc = resp.statusCode();
             if (sc == 429 || sc >= 500) {
-                long wait = resp.headers().firstValue("retry-after").map(v -> {
-                    try { return Math.min(5000L, Long.parseLong(v.trim()) * 1000); } catch (NumberFormatException e) { return 1500L; }
-                }).orElse(1500L);
-                throw new RetryableException("LLM HTTP " + sc, wait);
+                throw new RetryableException(describeError(sc, resp.body()), retryAfterMs(resp.headers().firstValue("retry-after")));
             }
-            if (sc >= 400) throw new LlmException("LLM HTTP " + sc);
+            if (sc == 400 && json && resp.body().contains("json_validate_failed")) {
+                throw new RetryableException(describeError(sc, resp.body()), 0, true);
+            }
+            if (sc >= 400) throw new LlmException(describeError(sc, resp.body()));
             JsonNode root = mapper.readTree(resp.body());
             JsonNode content = root.path("choices").path(0).path("message").path("content");
             if (content.isMissingNode() || content.asText().isBlank()) throw new LlmException("empty LLM response");
